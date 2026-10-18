@@ -45,7 +45,10 @@ private self-contained HTML report. Bead reports always use
 `reports/beads/<bead-id>/report.html` and never expose the internal run ID.
 Reports retain generation/finalization times, observed-agent totals, phase-
 colored session lanes, and individual pass rows while remaining
-private-permissioned and free of network assets. Use
+private-permissioned and free of network assets. Report timing uses concise
+human-readable units, and lane bars include a non-interactive phase legend.
+An empty ad-hoc request is labeled as a current-session-only report; it does
+not imply that unassociated delegated lanes are included. Use
 `sourceReleasePlan(version)` to prepare an immutable `git archive` release;
 publication is deliberately performed by the delivery controller.
 
