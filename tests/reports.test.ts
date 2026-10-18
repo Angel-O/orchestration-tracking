@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { parseOptions } from "../src/options.js";
-import { normalizeSelector, writeReport } from "../src/report.js";
+import { formatDuration, normalizeSelector, writeReport } from "../src/report.js";
 import { sourceReleasePlan } from "../src/release.js";
 import { TrackerStore, type SessionInput } from "../src/store.js";
 
@@ -17,6 +17,16 @@ function storeFixture() {
 }
 
 describe("run association and reports", () => {
+  test("formats durations with concise human-readable units", () => {
+    expect(formatDuration(0)).toBe("0 ms");
+    expect(formatDuration(999)).toBe("999 ms");
+    expect(formatDuration(1000)).toBe("1 s");
+    expect(formatDuration(1500)).toBe("1.5 s");
+    expect(formatDuration(61_000)).toBe("1m 1s");
+    expect(formatDuration(3_661_000)).toBe("1h 1m");
+    expect(formatDuration(90_000_000)).toBe("1d 1h");
+  });
+
   test("associates root, parent-chain, and explicit primary sessions idempotently", () => {
     const { directory, store } = storeFixture();
     store.recordSession(session("root"));
@@ -100,6 +110,12 @@ describe("run association and reports", () => {
     expect(html).toContain("Phase segments");
     expect(html).toContain("Shared time scale");
     expect(html).toContain("lane-track");
+    expect(html).toContain("Timeline legend:");
+    expect(html).toContain("not interactive controls");
+    expect(html).toContain("timeline-segment");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("Active ms");
+    expect(html).not.toContain("Duration ms");
     expect(html.includes("width:")).toBe(true);
     expect(html).toContain("<h2>Passes</h2>");
     expect(html).toContain("P1");
@@ -109,6 +125,23 @@ describe("run association and reports", () => {
     expect(html.includes("network assets")).toBe(true);
     expect(html).not.toMatch(/prompt|transcript|tool payload|token|git data/i);
     expect(html.includes("<script") || html.includes("src=") || html.includes("href=")).toBe(false);
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("labels an empty ad-hoc request as current-session scope", () => {
+    const { directory, store } = storeFixture();
+    const root = session("ad-hoc-root");
+    store.admit({ ...root, messageID: "ad-hoc-message", agent: "worker", startedAt: 1000 });
+    store.closeExecution({ eventID: "ad-hoc-event", aggregateID: "ad-hoc-aggregate", sequence: 1, sessionID: root.sessionID, outcome: "completed", endedAt: 2500 });
+
+    const report = writeReport(store, undefined, 3000, root.sessionID);
+    const html = readFileSync(report.path, "utf8");
+    expect(html).toContain("Ad-hoc current-session report (selected session only)");
+    expect(html).toContain("1.5 s");
+    expect(html).not.toContain("1500 ms");
+    expect(html).toContain("Bars show pass timing and are not interactive controls.");
+
     store.close();
     rmSync(directory, { recursive: true, force: true });
   });
