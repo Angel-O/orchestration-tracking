@@ -9,12 +9,14 @@
     "./plugin": "./src/plugin.ts"
   },
   "scripts": {
+    "lint": "oxlint src tests",
     "test": "bun test tests",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@opencode/plugin": "2.0.16",
     "@types/node": "22.0.0",
+    "oxlint": "1.88.0",
     "typescript": "5.8.2"
   }
 }
