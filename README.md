@@ -53,6 +53,7 @@ publication is deliberately performed by the delivery controller.
 
 ```sh
 bun install --frozen-lockfile
+bun run lint
 bun run typecheck
 bun test tests
 ```
