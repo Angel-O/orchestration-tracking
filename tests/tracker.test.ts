@@ -76,7 +76,7 @@ describe("SQLite lifecycle core", () => {
     const db = new Database(join(directory, "tracker.sqlite"), { readonly: true });
     expect(db.query<{ journal_mode: string }>("PRAGMA journal_mode").get()?.journal_mode).toBe("wal");
     expect(db.query("PRAGMA foreign_key_list(passes)").all()).not.toHaveLength(0);
-    expect(db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(1);
+    expect(db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(3);
     db.close();
     store.close();
 

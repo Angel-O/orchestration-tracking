@@ -16,4 +16,13 @@ export {
   type PassOutcome,
   type PassRecord,
   type SessionInput,
+  type AssociationSource,
+  type ReportData,
+  type ReportPass,
+  type ReportRecord,
+  type ReportSelector,
+  type RunRecord,
 } from "./store.js";
+export { normalizeSelector, renderReport, writeReport, type ReportResult } from "./report.js";
+export { sourceReleasePlan, type SourceReleasePlan } from "./release.js";
+export { validateBeadID, parseTimestamp } from "./validation.js";
