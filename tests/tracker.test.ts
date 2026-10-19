@@ -4,14 +4,13 @@ import { join } from "node:path";
 import { test, expect, describe } from "bun:test";
 import { Database } from "bun:sqlite";
 import { TrackerPlugin } from "../src/plugin.js";
-import {
-  DEFAULT_PHASE_MAPPINGS,
-  mappingFor,
-  parseOptions,
-} from "../src/options.js";
+import { DEFAULT_PHASE_MAPPINGS, mappingFor, parseOptions } from "../src/options.js";
 import { TrackerStore } from "../src/store.js";
 
-const WorkerConstructor = (globalThis as any).Worker as new (url: string, options: { type: "module" }) => {
+const WorkerConstructor = (globalThis as any).Worker as new (
+  url: string,
+  options: { type: "module" },
+) => {
   onmessage: ((event: MessageEvent<{ type: string; value?: unknown }>) => void) | null;
   onerror: ((event: ErrorEvent) => void) | null;
   postMessage(value: unknown): void;
@@ -52,11 +51,26 @@ describe("options and plugin compatibility", () => {
     expect(mappingFor(options, "plan").phaseKey).toBe("planning");
     expect(mappingFor(options, "planner").phaseKey).toBe("architecture-decomposition");
     expect(mappingFor(options, "architect").phaseKey).toBe("architecture-decomposition");
-    expect(mappingFor(options, "investigator")).toMatchObject({ phaseKey: "investigation", phaseLabel: "Investigation" });
-    expect(mappingFor(options, "worker")).toMatchObject({ phaseKey: "implementation", phaseLabel: "Implementation" });
-    expect(mappingFor(options, "reviewer")).toMatchObject({ phaseKey: "review", phaseLabel: "Review" });
-    expect(mappingFor(options, "integration")).toMatchObject({ phaseKey: "integration", phaseLabel: "Integration validation" });
-    expect(mappingFor(options, "build")).toMatchObject({ phaseKey: "build-direct", phaseLabel: "Build (Direct)" });
+    expect(mappingFor(options, "investigator")).toMatchObject({
+      phaseKey: "investigation",
+      phaseLabel: "Investigation",
+    });
+    expect(mappingFor(options, "worker")).toMatchObject({
+      phaseKey: "implementation",
+      phaseLabel: "Implementation",
+    });
+    expect(mappingFor(options, "reviewer")).toMatchObject({
+      phaseKey: "review",
+      phaseLabel: "Review",
+    });
+    expect(mappingFor(options, "integration")).toMatchObject({
+      phaseKey: "integration",
+      phaseLabel: "Integration validation",
+    });
+    expect(mappingFor(options, "build")).toMatchObject({
+      phaseKey: "build-direct",
+      phaseLabel: "Build (Direct)",
+    });
     expect(mappingFor(options, "orchestrator").repeatEligible).toBe(false);
     expect(mappingFor(options, "unlisted-agent").phaseKey).toBe("unmapped");
   });
@@ -64,9 +78,17 @@ describe("options and plugin compatibility", () => {
   test("rejects invalid schema and relative storage paths", () => {
     expect(() => parseOptions({ schemaVersion: 2 })).toThrow();
     expect(() => parseOptions({ dataDir: "relative" })).toThrow();
-    expect(() => parseOptions({ phaseMappings: {
-      orchestrator: { phaseKey: "coordination", phaseLabel: "Coordination", repeatEligible: true },
-    } })).toThrow();
+    expect(() =>
+      parseOptions({
+        phaseMappings: {
+          orchestrator: {
+            phaseKey: "coordination",
+            phaseLabel: "Coordination",
+            repeatEligible: true,
+          },
+        },
+      }),
+    ).toThrow();
   });
 });
 
@@ -74,7 +96,9 @@ describe("SQLite lifecycle core", () => {
   test("migrates, enables required pragmas, and rejects newer schemas", () => {
     const { store, directory } = temporaryStore();
     const db = new Database(join(directory, "tracker.sqlite"), { readonly: true });
-    expect(db.query<{ journal_mode: string }>("PRAGMA journal_mode").get()?.journal_mode).toBe("wal");
+    expect(db.query<{ journal_mode: string }>("PRAGMA journal_mode").get()?.journal_mode).toBe(
+      "wal",
+    );
     expect(db.query("PRAGMA foreign_key_list(passes)").all()).not.toHaveLength(0);
     expect(db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(3);
     db.close();
@@ -92,10 +116,30 @@ describe("SQLite lifecycle core", () => {
 
   test("snapshots mappings and keeps duplicate prompt admission idempotent", () => {
     const { store, directory } = temporaryStore();
-    const first = store.admit({ ...session(), messageID: "message-1", agent: "plan", startedAt: 100 });
-    const replay = store.admit({ ...session(), messageID: "message-1", agent: "worker", startedAt: 101 });
-    const second = store.admit({ ...session(), messageID: "message-2", agent: "planner", startedAt: 102 });
-    const unknown = store.admit({ ...session(), messageID: "message-3", agent: "new-agent", startedAt: 103 });
+    const first = store.admit({
+      ...session(),
+      messageID: "message-1",
+      agent: "plan",
+      startedAt: 100,
+    });
+    const replay = store.admit({
+      ...session(),
+      messageID: "message-1",
+      agent: "worker",
+      startedAt: 101,
+    });
+    const second = store.admit({
+      ...session(),
+      messageID: "message-2",
+      agent: "planner",
+      startedAt: 102,
+    });
+    const unknown = store.admit({
+      ...session(),
+      messageID: "message-3",
+      agent: "new-agent",
+      startedAt: 103,
+    });
 
     expect(replay.id).toBe(first.id);
     expect(first.phaseKey).toBe("planning");
@@ -110,40 +154,48 @@ describe("SQLite lifecycle core", () => {
   test("deduplicates and orders durable execution receipts", () => {
     const { store, directory } = temporaryStore();
     store.admit({ ...session(), messageID: "message-1", agent: "worker", startedAt: 100 });
-    expect(store.closeExecution({
-      eventID: "event-2",
-      aggregateID: "aggregate-1",
-      sequence: 2,
-      sessionID: "session-1",
-      outcome: "completed",
-      endedAt: 200,
-    })).toBe(true);
-    expect(store.closeExecution({
-      eventID: "event-2",
-      aggregateID: "aggregate-1",
-      sequence: 2,
-      sessionID: "session-1",
-      outcome: "failed",
-      endedAt: 201,
-    })).toBe(false);
+    expect(
+      store.closeExecution({
+        eventID: "event-2",
+        aggregateID: "aggregate-1",
+        sequence: 2,
+        sessionID: "session-1",
+        outcome: "completed",
+        endedAt: 200,
+      }),
+    ).toBe(true);
+    expect(
+      store.closeExecution({
+        eventID: "event-2",
+        aggregateID: "aggregate-1",
+        sequence: 2,
+        sessionID: "session-1",
+        outcome: "failed",
+        endedAt: 201,
+      }),
+    ).toBe(false);
     store.admit({ ...session(), messageID: "message-2", agent: "worker", startedAt: 300 });
-    expect(store.closeExecution({
-      eventID: "old-event",
-      aggregateID: "aggregate-1",
-      sequence: 1,
-      sessionID: "session-1",
-      outcome: "failed",
-      endedAt: 301,
-    })).toBe(false);
+    expect(
+      store.closeExecution({
+        eventID: "old-event",
+        aggregateID: "aggregate-1",
+        sequence: 1,
+        sessionID: "session-1",
+        outcome: "failed",
+        endedAt: 301,
+      }),
+    ).toBe(false);
     expect(store.listPasses()[1]?.outcome).toBe("open");
-    expect(store.closeExecution({
-      eventID: "event-3",
-      aggregateID: "aggregate-1",
-      sequence: 3,
-      sessionID: "session-1",
-      outcome: "interrupted",
-      endedAt: 400,
-    })).toBe(true);
+    expect(
+      store.closeExecution({
+        eventID: "event-3",
+        aggregateID: "aggregate-1",
+        sequence: 3,
+        sessionID: "session-1",
+        outcome: "interrupted",
+        endedAt: 400,
+      }),
+    ).toBe(true);
     expect(store.listPasses()[1]?.outcome).toBe("interrupted");
     expect(store.listReceipts()).toHaveLength(2);
     store.close();
@@ -155,14 +207,16 @@ describe("SQLite lifecycle core", () => {
     store.admit({ ...session(), messageID: "message-1", agent: "worker", startedAt: 100 });
     store.admit({ ...session(), messageID: "message-2", agent: "worker", startedAt: 300 });
 
-    expect(store.closeExecution({
-      eventID: "delayed-event-1",
-      aggregateID: "aggregate-1",
-      sequence: 1,
-      sessionID: "session-1",
-      outcome: "completed",
-      endedAt: 200,
-    })).toBe(true);
+    expect(
+      store.closeExecution({
+        eventID: "delayed-event-1",
+        aggregateID: "aggregate-1",
+        sequence: 1,
+        sessionID: "session-1",
+        outcome: "completed",
+        endedAt: 200,
+      }),
+    ).toBe(true);
     expect(store.listPasses().map((pass) => pass.outcome)).toEqual(["completed", "open"]);
     store.close();
     rmSync(directory, { recursive: true, force: true });
@@ -187,12 +241,20 @@ describe("SQLite lifecycle core", () => {
     const barrier = new SharedArrayBuffer(8);
     const control = new Int32Array(barrier);
     const startWorker = (sequence: number) => {
-      const worker = new WorkerConstructor(new URL("./concurrent-receipt.worker.ts", import.meta.url).href, { type: "module" });
+      const worker = new WorkerConstructor(
+        new URL("./concurrent-receipt.worker.ts", import.meta.url).href,
+        { type: "module" },
+      );
       let ready!: () => void;
       let done!: (value: unknown) => void;
       let fail!: (error: unknown) => void;
-      const readyPromise = new Promise<void>((resolve) => { ready = resolve; });
-      const donePromise = new Promise<unknown>((resolve, reject) => { done = resolve; fail = reject; });
+      const readyPromise = new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+      const donePromise = new Promise<unknown>((resolve, reject) => {
+        done = resolve;
+        fail = reject;
+      });
       worker.onmessage = (event) => {
         if (event.data.type === "ready") ready();
         if (event.data.type === "done") done(event.data.value);
@@ -217,7 +279,9 @@ describe("SQLite lifecycle core", () => {
     expect(reader.listPasses()).toHaveLength(1);
     const sessions = reader.listSessions();
     expect(JSON.stringify(sessions)).not.toContain(directory);
-    expect(JSON.stringify(sessions)).not.toMatch(/prompt|response|transcript|token|tool_payload|git/i);
+    expect(JSON.stringify(sessions)).not.toMatch(
+      /prompt|response|transcript|token|tool_payload|git/i,
+    );
     expect([1, 2]).toContain(reader.listReceipts().length);
     expect(reader.listPasses()[0]?.outcome).toBe("completed");
     reader.close();

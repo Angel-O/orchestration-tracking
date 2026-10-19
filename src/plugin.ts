@@ -8,18 +8,38 @@ import { validateBeadID } from "./validation.js";
 const PLUGIN_ID = "orchestration-tracking";
 export const LAUNCH_METADATA_KEY = "orchestration-tracking.launch";
 
-interface LaunchDescriptor { readonly version: 1; readonly targetSessionID: string; readonly beadID: string; }
-
-function parseLaunchDescriptor(value: unknown): LaunchDescriptor {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid launch descriptor");
-  const descriptor = value as Record<string, unknown>;
-  const keys = Object.keys(descriptor);
-  if (keys.length !== 3 || !keys.every((key) => key === "version" || key === "targetSessionID" || key === "beadID")) throw new Error("invalid launch descriptor");
-  if (descriptor.version !== 1 || typeof descriptor.targetSessionID !== "string" || descriptor.targetSessionID.length === 0) throw new Error("invalid launch descriptor");
-  return { version: 1, targetSessionID: descriptor.targetSessionID, beadID: validateBeadID(descriptor.beadID) };
+interface LaunchDescriptor {
+  readonly version: 1;
+  readonly targetSessionID: string;
+  readonly beadID: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
+function parseLaunchDescriptor(value: unknown): LaunchDescriptor {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("invalid launch descriptor");
+  const descriptor = value as Record<string, unknown>;
+  const keys = Object.keys(descriptor);
+  if (
+    keys.length !== 3 ||
+    !keys.every((key) => key === "version" || key === "targetSessionID" || key === "beadID")
+  )
+    throw new Error("invalid launch descriptor");
+  if (
+    descriptor.version !== 1 ||
+    typeof descriptor.targetSessionID !== "string" ||
+    descriptor.targetSessionID.length === 0
+  )
+    throw new Error("invalid launch descriptor");
+  return {
+    version: 1,
+    targetSessionID: descriptor.targetSessionID,
+    beadID: validateBeadID(descriptor.beadID),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
 // These bounded JSON schemas describe the host-visible `output` values without changing tool behavior.
 const runRecordOutputSchema = {
@@ -36,21 +56,47 @@ const runRecordOutputSchema = {
     workEndedAt: { type: ["number", "null"] },
     reportPath: { type: ["string", "null"] },
   },
-  required: ["runID", "rootSessionID", "beadID", "projectLabel", "status", "startedAt", "endedAt", "workStartedAt", "workEndedAt", "reportPath"],
+  required: [
+    "runID",
+    "rootSessionID",
+    "beadID",
+    "projectLabel",
+    "status",
+    "startedAt",
+    "endedAt",
+    "workStartedAt",
+    "workEndedAt",
+    "reportPath",
+  ],
   additionalProperties: false,
 } as const;
 
 const runStartOutputSchema = {
   oneOf: [
     runRecordOutputSchema,
-    { type: "object", properties: { started: { type: "boolean", enum: [false] } }, required: ["started"], additionalProperties: false },
+    {
+      type: "object",
+      properties: { started: { type: "boolean", enum: [false] } },
+      required: ["started"],
+      additionalProperties: false,
+    },
   ],
 } as const;
 
 const laneAttachOutputSchema = {
   oneOf: [
-    { type: "object", properties: { attached: { type: "boolean", enum: [true] }, sessionID: { type: "string" } }, required: ["attached", "sessionID"], additionalProperties: false },
-    { type: "object", properties: { attached: { type: "boolean", enum: [false] } }, required: ["attached"], additionalProperties: false },
+    {
+      type: "object",
+      properties: { attached: { type: "boolean", enum: [true] }, sessionID: { type: "string" } },
+      required: ["attached", "sessionID"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: { attached: { type: "boolean", enum: [false] } },
+      required: ["attached"],
+      additionalProperties: false,
+    },
   ],
 } as const;
 
@@ -77,9 +123,36 @@ const reportResultOutputSchema = {
 
 const closeoutOutputSchema = {
   oneOf: [
-    { type: "object", properties: { status: { type: "string", enum: ["not-finalized"] }, finalized: { type: "boolean", enum: [false] }, report: { type: "null" } }, required: ["status", "finalized", "report"], additionalProperties: false },
-    { type: "object", properties: { status: { type: "string", enum: ["finalized"] }, finalized: { type: "boolean", enum: [true] }, report: reportResultOutputSchema }, required: ["status", "finalized", "report"], additionalProperties: false },
-    { type: "object", properties: { status: { type: "string", enum: ["finalized-report-failed"] }, finalized: { type: "boolean", enum: [true] }, report: { type: "null" } }, required: ["status", "finalized", "report"], additionalProperties: false },
+    {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["not-finalized"] },
+        finalized: { type: "boolean", enum: [false] },
+        report: { type: "null" },
+      },
+      required: ["status", "finalized", "report"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["finalized"] },
+        finalized: { type: "boolean", enum: [true] },
+        report: reportResultOutputSchema,
+      },
+      required: ["status", "finalized", "report"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["finalized-report-failed"] },
+        finalized: { type: "boolean", enum: [true] },
+        report: { type: "null" },
+      },
+      required: ["status", "finalized", "report"],
+      additionalProperties: false,
+    },
   ],
 } as const;
 
@@ -94,18 +167,35 @@ function diagnose(message: string, error: unknown): void {
 }
 
 async function consumeLaunchDescriptor(
-  updateMetadata: (input: { sessionID: string; metadata: Record<string, unknown> }) => Promise<unknown>,
+  updateMetadata: (input: {
+    sessionID: string;
+    metadata: Record<string, unknown>;
+  }) => Promise<unknown>,
   store: TrackerStore,
-  session: { id: string; parentID?: string; projectID: string; agent?: string; metadata?: Record<string, unknown> },
-  baseSession: (sessionID: string, parentID?: string, projectID?: string, workspaceID?: string) => SessionInput,
+  session: {
+    id: string;
+    parentID?: string;
+    projectID: string;
+    agent?: string;
+    metadata?: Record<string, unknown>;
+  },
+  baseSession: (
+    sessionID: string,
+    parentID?: string,
+    projectID?: string,
+    workspaceID?: string,
+  ) => SessionInput,
   workspaceID?: string,
 ): Promise<void> {
   const metadata = session.metadata;
-  if (!isRecord(metadata) || !Object.prototype.hasOwnProperty.call(metadata, LAUNCH_METADATA_KEY)) return;
+  if (!isRecord(metadata) || !Object.prototype.hasOwnProperty.call(metadata, LAUNCH_METADATA_KEY))
+    return;
   try {
     const descriptor = parseLaunchDescriptor(metadata[LAUNCH_METADATA_KEY]);
-    if (descriptor.targetSessionID !== session.id) throw new Error("launch descriptor target mismatch");
-    if (typeof session.agent !== "string" || session.agent.length === 0) throw new Error("session agent unavailable");
+    if (descriptor.targetSessionID !== session.id)
+      throw new Error("launch descriptor target mismatch");
+    if (typeof session.agent !== "string" || session.agent.length === 0)
+      throw new Error("session agent unavailable");
     store.attachPrimaryByBead({
       beadID: descriptor.beadID,
       session: baseSession(session.id, session.parentID, session.projectID, workspaceID),
@@ -152,10 +242,24 @@ export const TrackerPlugin = Plugin.define({
       await ctx.session.hook("prompt", async (event) => {
         try {
           const session = await ctx.session.get({ sessionID: event.sessionID });
-          const updateMetadata = ctx.session.update as unknown as (input: { sessionID: string; metadata: Record<string, unknown> }) => Promise<unknown>;
-          await consumeLaunchDescriptor(updateMetadata, store, session, baseSession, ctx.location.workspaceID);
+          const updateMetadata = ctx.session.update as unknown as (input: {
+            sessionID: string;
+            metadata: Record<string, unknown>;
+          }) => Promise<unknown>;
+          await consumeLaunchDescriptor(
+            updateMetadata,
+            store,
+            session,
+            baseSession,
+            ctx.location.workspaceID,
+          );
           store.admit({
-            ...baseSession(session.id, session.parentID, session.projectID, ctx.location.workspaceID),
+            ...baseSession(
+              session.id,
+              session.parentID,
+              session.projectID,
+              ctx.location.workspaceID,
+            ),
             messageID: event.messageID,
             agent: session.agent,
           });
@@ -173,7 +277,12 @@ export const TrackerPlugin = Plugin.define({
         });
         const sessionInput = async (sessionID: string): Promise<SessionInput> => {
           const session = await ctx.session.get({ sessionID });
-          return baseSession(session.id, session.parentID, session.projectID, ctx.location.workspaceID);
+          return baseSession(
+            session.id,
+            session.parentID,
+            session.projectID,
+            ctx.location.workspaceID,
+          );
         };
         tools.add({
           name: "tracking_run_start",
@@ -194,7 +303,13 @@ export const TrackerPlugin = Plugin.define({
         tools.add({
           name: "tracking_lane_attach",
           description: "Attach an actual OpenCode primary session to an active tracker run.",
-          input: input({ runID: { type: "string", minLength: 1 }, sessionID: { type: "string", minLength: 1 } }, ["runID", "sessionID"]),
+          input: input(
+            {
+              runID: { type: "string", minLength: 1 },
+              sessionID: { type: "string", minLength: 1 },
+            },
+            ["runID", "sessionID"],
+          ),
           output: laneAttachOutputSchema,
           execute: async (rawArgs) => {
             const args = rawArgs as { runID: string; sessionID: string };
@@ -211,7 +326,8 @@ export const TrackerPlugin = Plugin.define({
         });
         tools.add({
           name: "tracking_closeout",
-          description: "Finalize the matching run after successful Bead closeout and regenerate its private report.",
+          description:
+            "Finalize the matching run after successful Bead closeout and regenerate its private report.",
           input: input({ beadID: { type: "string", minLength: 1 } }, ["beadID"]),
           output: closeoutOutputSchema,
           execute: async (rawArgs) => {
@@ -227,13 +343,16 @@ export const TrackerPlugin = Plugin.define({
               return { output: { status: "finalized", finalized: true, report } };
             } catch (error) {
               diagnose("report rendering failed after closeout", error);
-              return { output: { status: "finalized-report-failed", finalized: true, report: null } };
+              return {
+                output: { status: "finalized-report-failed", finalized: true, report: null },
+              };
             }
           },
         });
         tools.add({
           name: "tracking_report",
-          description: "Read-only report for one Bead, selected sessions, and/or an intersecting time range.",
+          description:
+            "Read-only report for one Bead, selected sessions, and/or an intersecting time range.",
           input: input({
             bead: { type: "string" },
             sessions: { type: "array", items: { type: "string" }, minItems: 1 },
@@ -241,7 +360,9 @@ export const TrackerPlugin = Plugin.define({
             to: { type: "string" },
           }),
           output: reportResultOutputSchema,
-          execute: async (args: unknown, context) => ({ output: writeReport(store, args, Date.now(), context.sessionID) }),
+          execute: async (args: unknown, context) => ({
+            output: writeReport(store, args, Date.now(), context.sessionID),
+          }),
         });
       });
 
@@ -269,9 +390,12 @@ export const TrackerPlugin = Plugin.define({
                 aggregateID: event.durable.aggregateID,
                 sequence: event.durable.seq,
                 sessionID: event.data.sessionID,
-                outcome: event.type === "session.execution.succeeded"
-                  ? "completed"
-                  : event.type === "session.execution.failed" ? "failed" : "interrupted",
+                outcome:
+                  event.type === "session.execution.succeeded"
+                    ? "completed"
+                    : event.type === "session.execution.failed"
+                      ? "failed"
+                      : "interrupted",
                 endedAt: event.created,
                 session: baseSession(event.data.sessionID),
               });

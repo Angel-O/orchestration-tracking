@@ -93,9 +93,10 @@ export function parseOptions(input: unknown = {}): TrackerOptions {
     throw new Error("unsupported tracker options schema version");
   }
 
-  const dataDir = input.dataDir === undefined
-    ? join(homedir(), ".local", "share", "opencode", "orchestration-tracker")
-    : input.dataDir;
+  const dataDir =
+    input.dataDir === undefined
+      ? join(homedir(), ".local", "share", "opencode", "orchestration-tracker")
+      : input.dataDir;
   if (typeof dataDir !== "string" || !isAbsolute(dataDir)) {
     throw new Error("tracker dataDir must be an absolute path");
   }
@@ -122,5 +123,5 @@ export function parseOptions(input: unknown = {}): TrackerOptions {
 }
 
 export function mappingFor(options: TrackerOptions, agent: string | undefined): PhaseMapping {
-  return agent === undefined ? UNMAPPED_PHASE : options.phaseMappings[agent] ?? UNMAPPED_PHASE;
+  return agent === undefined ? UNMAPPED_PHASE : (options.phaseMappings[agent] ?? UNMAPPED_PHASE);
 }

@@ -23,14 +23,27 @@ async function fixture(initial: Record<string, TestSession> = {}) {
   let promptHook: ((event: { sessionID: string; messageID: string }) => Promise<void>) | undefined;
   const context = {
     options: { dataDir: directory },
-    location: { directory: "/safe/workspace", project: { id: "project-safe" }, workspaceID: "workspace-safe" },
+    location: {
+      directory: "/safe/workspace",
+      project: { id: "project-safe" },
+      workspaceID: "workspace-safe",
+    },
     session: {
-      hook: async (_name: string, callback: (event: { sessionID: string; messageID: string }) => Promise<void>) => {
+      hook: async (
+        _name: string,
+        callback: (event: { sessionID: string; messageID: string }) => Promise<void>,
+      ) => {
         promptHook = callback;
         return { dispose: async () => undefined };
       },
       get: async ({ sessionID }: { sessionID: string }) => sessions[sessionID],
-      update: async ({ sessionID, metadata }: { sessionID: string; metadata: Record<string, unknown> }) => {
+      update: async ({
+        sessionID,
+        metadata,
+      }: {
+        sessionID: string;
+        metadata: Record<string, unknown>;
+      }) => {
         if (updateFails) throw new Error("metadata update failed");
         updates.push({ sessionID, metadata });
         sessions[sessionID]!.metadata = metadata;
@@ -42,16 +55,32 @@ async function fixture(initial: Record<string, TestSession> = {}) {
         return { dispose: async () => undefined };
       },
     },
-    event: { subscribe: async function* () { /* no lifecycle events in this contract test */ } },
+    event: {
+      subscribe: async function* () {
+        /* no lifecycle events in this contract test */
+      },
+    },
   };
   const cleanup = await TrackerPlugin.setup(context as never);
   const prompt = async (sessionID: string, messageID = `message-${sessionID}`) => {
     if (!promptHook) throw new Error("prompt hook was not registered");
     await promptHook({ sessionID, messageID });
   };
-  const startRun = (beadID: string, sessionID = "root") => registered[0].execute({ beadID }, { sessionID });
+  const startRun = (beadID: string, sessionID = "root") =>
+    registered[0].execute({ beadID }, { sessionID });
   const closeout = (beadID: string) => registered[2].execute({ beadID }, {});
-  return { directory, sessions, updates, setUpdateFailure: (value: boolean) => { updateFails = value; }, startRun, closeout, prompt, cleanup };
+  return {
+    directory,
+    sessions,
+    updates,
+    setUpdateFailure: (value: boolean) => {
+      updateFails = value;
+    },
+    startRun,
+    closeout,
+    prompt,
+    cleanup,
+  };
 }
 
 function readAssociations(directory: string, runID: string) {
@@ -85,8 +114,14 @@ describe("deterministic primary launch descriptors", () => {
       expect(testFixture.sessions.primary?.metadata).toEqual({ keep: "this" });
       expect(testFixture.updates).toHaveLength(1);
       const result = readAssociations(testFixture.directory, run.output.runID);
-      expect(result.associations.some((item) => item.sessionID === "primary" && item.source === "explicit-primary")).toBe(true);
-      expect(result.passes.find((pass) => pass.sessionID === "primary")?.observedAgent).toBe("worker");
+      expect(
+        result.associations.some(
+          (item) => item.sessionID === "primary" && item.source === "explicit-primary",
+        ),
+      ).toBe(true);
+      expect(result.passes.find((pass) => pass.sessionID === "primary")?.observedAgent).toBe(
+        "worker",
+      );
     } finally {
       await dispose(testFixture);
     }
@@ -102,7 +137,9 @@ describe("deterministic primary launch descriptors", () => {
       await testFixture.prompt("primary", "same-message");
       await testFixture.prompt("primary", "same-message");
       const result = readAssociations(testFixture.directory, run.output.runID);
-      expect(result.associations.filter((item) => item.sessionID === "primary")).toEqual([{ sessionID: "primary", source: "explicit-primary" }]);
+      expect(result.associations.filter((item) => item.sessionID === "primary")).toEqual([
+        { sessionID: "primary", source: "explicit-primary" },
+      ]);
       expect(result.passes.filter((pass) => pass.sessionID === "primary")).toHaveLength(1);
       expect(testFixture.updates).toHaveLength(1);
     } finally {
@@ -111,7 +148,10 @@ describe("deterministic primary launch descriptors", () => {
   });
 
   async function expectConsumed(descriptor: unknown): Promise<void> {
-    const testFixture = await fixture({ root: { id: "root", projectID: "project-safe", agent: "orchestrator" }, primary: primary(descriptor) });
+    const testFixture = await fixture({
+      root: { id: "root", projectID: "project-safe", agent: "orchestrator" },
+      primary: primary(descriptor),
+    });
     try {
       await testFixture.prompt("primary");
       expect(testFixture.sessions.primary?.metadata).toEqual({ keep: "this" });
@@ -122,7 +162,12 @@ describe("deterministic primary launch descriptors", () => {
   }
 
   test("consumes malformed descriptors without blocking pass recording", async () => {
-    await expectConsumed({ version: 1, targetSessionID: "primary", beadID: "bead-malformed", extra: true });
+    await expectConsumed({
+      version: 1,
+      targetSessionID: "primary",
+      beadID: "bead-malformed",
+      extra: true,
+    });
   });
 
   test("consumes unsupported descriptors without blocking pass recording", async () => {
@@ -132,13 +177,22 @@ describe("deterministic primary launch descriptors", () => {
   test("removes mismatched inherited metadata while retaining parent-chain association", async () => {
     const testFixture = await fixture({
       root: { id: "root", projectID: "project-safe", agent: "orchestrator" },
-      child: { ...primary({ version: 1, targetSessionID: "root", beadID: "bead-inherited" }), id: "child", parentID: "root", agent: "planner" },
+      child: {
+        ...primary({ version: 1, targetSessionID: "root", beadID: "bead-inherited" }),
+        id: "child",
+        parentID: "root",
+        agent: "planner",
+      },
     });
     try {
       const run = await testFixture.startRun("bead-inherited");
       await testFixture.prompt("child");
       expect(testFixture.sessions.child?.metadata).toEqual({ keep: "this" });
-      expect(readAssociations(testFixture.directory, run.output.runID).associations.some((item) => item.sessionID === "child" && item.source === "parent-chain")).toBe(true);
+      expect(
+        readAssociations(testFixture.directory, run.output.runID).associations.some(
+          (item) => item.sessionID === "child" && item.source === "parent-chain",
+        ),
+      ).toBe(true);
     } finally {
       await dispose(testFixture);
     }
@@ -163,7 +217,10 @@ describe("deterministic primary launch descriptors", () => {
   test("requires the fetched session agent before explicit attachment", async () => {
     const testFixture = await fixture({
       root: { id: "root", projectID: "project-safe", agent: "orchestrator" },
-      primary: { ...primary({ version: 1, targetSessionID: "primary", beadID: "bead-no-agent" }), agent: undefined },
+      primary: {
+        ...primary({ version: 1, targetSessionID: "primary", beadID: "bead-no-agent" }),
+        agent: undefined,
+      },
     });
     try {
       const run = await testFixture.startRun("bead-no-agent");
@@ -178,7 +235,10 @@ describe("deterministic primary launch descriptors", () => {
   });
 
   test("consumes missing-run and finalized-run descriptors", async () => {
-    const missing = await fixture({ root: { id: "root", projectID: "project-safe", agent: "orchestrator" }, primary: primary({ version: 1, targetSessionID: "primary", beadID: "bead-missing" }) });
+    const missing = await fixture({
+      root: { id: "root", projectID: "project-safe", agent: "orchestrator" },
+      primary: primary({ version: 1, targetSessionID: "primary", beadID: "bead-missing" }),
+    });
     try {
       await missing.prompt("primary");
       expect(missing.sessions.primary?.metadata).toEqual({ keep: "this" });
@@ -186,7 +246,10 @@ describe("deterministic primary launch descriptors", () => {
       await dispose(missing);
     }
 
-    const finalized = await fixture({ root: { id: "root", projectID: "project-safe", agent: "orchestrator" }, primary: primary({ version: 1, targetSessionID: "primary", beadID: "bead-finalized" }) });
+    const finalized = await fixture({
+      root: { id: "root", projectID: "project-safe", agent: "orchestrator" },
+      primary: primary({ version: 1, targetSessionID: "primary", beadID: "bead-finalized" }),
+    });
     try {
       await finalized.startRun("bead-finalized");
       expect((await finalized.closeout("bead-finalized")).output.status).toBe("finalized");
@@ -199,12 +262,17 @@ describe("deterministic primary launch descriptors", () => {
   });
 
   test("keeps descriptor failures nonblocking and diagnostics content-free", async () => {
-    const testFixture = await fixture({ root: { id: "root", projectID: "project-safe", agent: "orchestrator" }, primary: primary({ version: 1, targetSessionID: "primary", beadID: "bead-private" }) });
+    const testFixture = await fixture({
+      root: { id: "root", projectID: "project-safe", agent: "orchestrator" },
+      primary: primary({ version: 1, targetSessionID: "primary", beadID: "bead-private" }),
+    });
     const warnings: string[] = [];
     const originalWarn = console.warn;
     console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
     try {
-      (testFixture.sessions.primary as TestSession).metadata = { [LAUNCH_METADATA_KEY]: { version: 1, targetSessionID: "primary", beadID: "bead-private" } };
+      (testFixture.sessions.primary as TestSession).metadata = {
+        [LAUNCH_METADATA_KEY]: { version: 1, targetSessionID: "primary", beadID: "bead-private" },
+      };
       testFixture.setUpdateFailure(true);
       await testFixture.prompt("primary");
       expect(readAssociations(testFixture.directory, "missing-run").passes).toHaveLength(1);
