@@ -63,8 +63,8 @@ An empty ad-hoc request is labeled as a current-session-only report; it does
 not imply that unassociated delegated lanes are included. Use
 `sourceReleasePlan(version)` to prepare an immutable `git archive` release;
 publication is deliberately performed by the delivery controller. The
-corrected source release input for this portable entrypoint is `v0.1.2`
-(`orchestration-tracking-0.1.2.tar.gz`).
+corrected source release input for this portable entrypoint is `v0.1.4`
+(`orchestration-tracking-0.1.4.tar.gz`).
 
 ## Development
 
