@@ -3,8 +3,23 @@ import { Plugin } from "@opencode/plugin";
 import { parseOptions } from "./options.js";
 import { TrackerStore, type SessionInput } from "./store.js";
 import { writeReport } from "./report.js";
+import { validateBeadID } from "./validation.js";
 
 const PLUGIN_ID = "orchestration-tracking";
+export const LAUNCH_METADATA_KEY = "orchestration-tracking.launch";
+
+interface LaunchDescriptor { readonly version: 1; readonly targetSessionID: string; readonly beadID: string; }
+
+function parseLaunchDescriptor(value: unknown): LaunchDescriptor {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid launch descriptor");
+  const descriptor = value as Record<string, unknown>;
+  const keys = Object.keys(descriptor);
+  if (keys.length !== 3 || !keys.every((key) => key === "version" || key === "targetSessionID" || key === "beadID")) throw new Error("invalid launch descriptor");
+  if (descriptor.version !== 1 || typeof descriptor.targetSessionID !== "string" || descriptor.targetSessionID.length === 0) throw new Error("invalid launch descriptor");
+  return { version: 1, targetSessionID: descriptor.targetSessionID, beadID: validateBeadID(descriptor.beadID) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 
 function projectLabel(directory: string): string {
   return `workspace-${createHash("sha256").update(directory).digest("hex").slice(0, 16)}`;
@@ -14,6 +29,35 @@ function diagnose(message: string, error: unknown): void {
   // Keep diagnostics local and content-free; SQLite/path details can contain private data.
   const kind = error instanceof Error ? error.name : "UnknownError";
   console.warn(`[${PLUGIN_ID}] ${message}: ${kind}`);
+}
+
+async function consumeLaunchDescriptor(
+  updateMetadata: (input: { sessionID: string; metadata: Record<string, unknown> }) => Promise<unknown>,
+  store: TrackerStore,
+  session: { id: string; parentID?: string; projectID: string; agent?: string; metadata?: Record<string, unknown> },
+  baseSession: (sessionID: string, parentID?: string, projectID?: string, workspaceID?: string) => SessionInput,
+  workspaceID?: string,
+): Promise<void> {
+  const metadata = session.metadata;
+  if (!isRecord(metadata) || !Object.prototype.hasOwnProperty.call(metadata, LAUNCH_METADATA_KEY)) return;
+  try {
+    const descriptor = parseLaunchDescriptor(metadata[LAUNCH_METADATA_KEY]);
+    if (descriptor.targetSessionID !== session.id) throw new Error("launch descriptor target mismatch");
+    if (typeof session.agent !== "string" || session.agent.length === 0) throw new Error("session agent unavailable");
+    store.attachPrimaryByBead({
+      beadID: descriptor.beadID,
+      session: baseSession(session.id, session.parentID, session.projectID, workspaceID),
+    });
+  } catch (error) {
+    diagnose("launch descriptor ignored; delivery continues", error);
+  }
+  try {
+    const remaining = { ...metadata };
+    delete remaining[LAUNCH_METADATA_KEY];
+    await updateMetadata({ sessionID: session.id, metadata: remaining });
+  } catch (error) {
+    diagnose("launch descriptor removal failed; delivery continues", error);
+  }
 }
 
 export const TrackerPlugin = Plugin.define({
@@ -46,8 +90,10 @@ export const TrackerPlugin = Plugin.define({
       await ctx.session.hook("prompt", async (event) => {
         try {
           const session = await ctx.session.get({ sessionID: event.sessionID });
+          const updateMetadata = ctx.session.update as unknown as (input: { sessionID: string; metadata: Record<string, unknown> }) => Promise<unknown>;
+          await consumeLaunchDescriptor(updateMetadata, store, session, baseSession, ctx.location.workspaceID);
           store.admit({
-            ...baseSession(event.sessionID, session.parentID, session.projectID, ctx.location.workspaceID),
+            ...baseSession(session.id, session.parentID, session.projectID, ctx.location.workspaceID),
             messageID: event.messageID,
             agent: session.agent,
           });

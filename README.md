@@ -7,8 +7,11 @@ inside Bun using the Promise plugin API exposed by `@opencode/plugin`.
 
 - OpenCode V2 Promise plugins, baseline `@opencode/plugin` 2.0.16 or newer
   within major version 2.
-- Source entrypoint: `src/plugin.ts`, exporting
-  `Plugin.define({ id: "orchestration-tracking", setup })`.
+- Package root entrypoint: `src/index.ts`, default-exporting the supported
+  `Plugin.define({ id: "orchestration-tracking", setup })` plugin while
+  retaining the named `TrackerPlugin` and other API exports. The package root
+  can be loaded directly from an installed directory; `./plugin` remains a
+  compatibility subpath.
 - Options use `schemaVersion: 1`, optional absolute `dataDir`, and
   `phaseMappings`. The default directory is
   `~/.local/share/opencode/orchestration-tracker/`.
@@ -19,6 +22,15 @@ inside Bun using the Promise plugin API exposed by `@opencode/plugin`.
   Investigation, Implementation, Review, and Integration validation; only the
   built-in `build` agent maps to Build (Direct). Unknown agents snapshot as
   `unmapped`; orchestrator repeat warnings are disabled.
+- Bead-aware primary launches use the namespaced session metadata key
+  `orchestration-tracking.launch` with the exact shape
+  `{ version: 1, targetSessionID, beadID }`. On the target session's first
+  prompt, the plugin validates the descriptor, resolves the unique open run by
+  Bead, trusts the fetched session agent, attaches the session as
+  `explicit-primary`, and removes only that metadata key. Invalid, inherited,
+  mismatched, missing-run, and finalized-run descriptors are consumed without
+  blocking delivery; descendants remain parent-chain associated. The manual
+  `tracking_lane_attach` tool remains recovery-only.
 
 The database is local `bun:sqlite` only. It enables WAL, foreign keys, and a
 bounded busy timeout, and applies transactional forward migrations through
@@ -50,7 +62,9 @@ human-readable units, and lane bars include a non-interactive phase legend.
 An empty ad-hoc request is labeled as a current-session-only report; it does
 not imply that unassociated delegated lanes are included. Use
 `sourceReleasePlan(version)` to prepare an immutable `git archive` release;
-publication is deliberately performed by the delivery controller.
+publication is deliberately performed by the delivery controller. The
+corrected source release input for this portable entrypoint is `v0.1.2`
+(`orchestration-tracking-0.1.2.tar.gz`).
 
 ## Development
 
