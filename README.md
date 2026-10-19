@@ -70,6 +70,8 @@ corrected source release input for this portable entrypoint is `v0.1.2`
 
 ```sh
 bun install --frozen-lockfile
+bun run format
+bun run format:check
 bun run lint
 bun run typecheck
 bun test tests

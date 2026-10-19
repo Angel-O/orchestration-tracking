@@ -12,6 +12,8 @@ It is written in TypeScript and runs on Bun 1.3.14.
 
 ```sh
 bun install --frozen-lockfile
+bun run format
+bun run format:check
 bun test tests
 bun run typecheck
 bun run lint
