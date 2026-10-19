@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { parseOptions } from "../src/options.js";
-import { formatDuration, normalizeSelector, writeReport } from "../src/report.js";
+import { formatDuration, normalizeSelector, renderReport, writeReport } from "../src/report.js";
 import { sourceReleasePlan } from "../src/release.js";
 import { TrackerStore, type SessionInput } from "../src/store.js";
 
@@ -113,6 +113,8 @@ describe("run association and reports", () => {
     expect(html).toContain("Timeline legend:");
     expect(html).toContain("not interactive controls");
     expect(html).toContain("timeline-segment");
+    expect(html).toContain(".timeline-scroll{overflow-x:auto}");
+    expect(html).toContain(".timeline-table{min-width:48rem}");
     expect(html).not.toContain("<input");
     expect(html).not.toContain("Active ms");
     expect(html).not.toContain("Duration ms");
@@ -173,10 +175,21 @@ describe("run association and reports", () => {
       store.admit({ ...session(sessionID, "repeat-root"), messageID: `repeat-${suffix}`, agent: "worker", startedAt: start });
       store.closeExecution({ eventID: `repeat-event-${suffix}`, aggregateID: `repeat-aggregate-${suffix}`, sequence: 1, sessionID, outcome: "completed", endedAt: end });
     }
-    expect(store.reportData({ bead: "bead-repeat-sessions" }).repeats).toEqual([
+    const reportData = store.reportData({ bead: "bead-repeat-sessions" });
+    expect(reportData.repeats).toEqual([
       { agent: "worker", sessionID: "repeat-a", phaseLabel: "Implementation", passes: 1, repeated: false },
       { agent: "worker", sessionID: "repeat-b", phaseLabel: "Implementation", passes: 1, repeated: false },
     ]);
+    const html = renderReport(reportData);
+    const summary = html.match(/<table class="session-summary">.*?<\/table>/)?.[0] ?? "";
+    const timelines = html.match(/<table class="timeline-table">.*?<\/table>/)?.[0] ?? "";
+    expect(summary).toContain("<th>Session</th><th>Passes</th><th>Active time</th><th>Outcomes</th>");
+    expect(summary).not.toContain("Phase segments");
+    expect(html).toContain('</table><section aria-labelledby="phase-segments-heading"><h3 id="phase-segments-heading">Phase segments</h3>');
+    expect(summary.indexOf("repeat-a") < summary.indexOf("repeat-b")).toBe(true);
+    expect(timelines.indexOf("repeat-a") < timelines.indexOf("repeat-b")).toBe(true);
+    expect(timelines).toContain('aria-label="Timeline for repeat-a"');
+    expect(timelines).toContain('aria-label="Timeline for repeat-b"');
     store.close();
     rmSync(directory, { recursive: true, force: true });
   });
