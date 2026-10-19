@@ -22,6 +22,15 @@ inside Bun using the Promise plugin API exposed by `@opencode/plugin`.
   Investigation, Implementation, Review, and Integration validation; only the
   built-in `build` agent maps to Build (Direct). Unknown agents snapshot as
   `unmapped`; orchestrator repeat warnings are disabled.
+- Bead-aware primary launches use the namespaced session metadata key
+  `orchestration-tracking.launch` with the exact shape
+  `{ version: 1, targetSessionID, beadID }`. On the target session's first
+  prompt, the plugin validates the descriptor, resolves the unique open run by
+  Bead, trusts the fetched session agent, attaches the session as
+  `explicit-primary`, and removes only that metadata key. Invalid, inherited,
+  mismatched, missing-run, and finalized-run descriptors are consumed without
+  blocking delivery; descendants remain parent-chain associated. The manual
+  `tracking_lane_attach` tool remains recovery-only.
 
 The database is local `bun:sqlite` only. It enables WAL, foreign keys, and a
 bounded busy timeout, and applies transactional forward migrations through
@@ -54,8 +63,8 @@ An empty ad-hoc request is labeled as a current-session-only report; it does
 not imply that unassociated delegated lanes are included. Use
 `sourceReleasePlan(version)` to prepare an immutable `git archive` release;
 publication is deliberately performed by the delivery controller. The
-corrected source release input for this portable entrypoint is `v0.1.1`
-(`orchestration-tracking-0.1.1.tar.gz`).
+corrected source release input for this portable entrypoint is `v0.1.2`
+(`orchestration-tracking-0.1.2.tar.gz`).
 
 ## Development
 

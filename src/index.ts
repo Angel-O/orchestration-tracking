@@ -1,5 +1,5 @@
 export { default } from "./plugin.js";
-export { TrackerPlugin } from "./plugin.js";
+export { LAUNCH_METADATA_KEY, TrackerPlugin } from "./plugin.js";
 export {
   DEFAULT_PHASE_MAPPINGS,
   SCHEMA_VERSION,
