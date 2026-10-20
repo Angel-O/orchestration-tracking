@@ -286,8 +286,8 @@ export const TrackerPlugin = Plugin.define({
         };
         tools.add({
           name: "tracking_run_start",
-          // Shared visibility capability; execution remains unchanged.
-          options: { permission: "orchestration_tracking" },
+          // Direct exposure avoids generic Code Mode; permission remains the visibility gate.
+          options: { permission: "orchestration_tracking", codemode: false },
           description: "Start or resume the tracker run rooted at the invoking OpenCode session.",
           input: input({ beadID: { type: "string", minLength: 1 } }, ["beadID"]),
           output: runStartOutputSchema,
@@ -304,7 +304,7 @@ export const TrackerPlugin = Plugin.define({
         });
         tools.add({
           name: "tracking_lane_attach",
-          options: { permission: "orchestration_tracking" },
+          options: { permission: "orchestration_tracking", codemode: false },
           description: "Attach an actual OpenCode primary session to an active tracker run.",
           input: input(
             {
@@ -329,7 +329,7 @@ export const TrackerPlugin = Plugin.define({
         });
         tools.add({
           name: "tracking_closeout",
-          options: { permission: "orchestration_tracking" },
+          options: { permission: "orchestration_tracking", codemode: false },
           description:
             "Finalize the matching run after successful Bead closeout and regenerate its private report.",
           input: input({ beadID: { type: "string", minLength: 1 } }, ["beadID"]),
@@ -355,7 +355,7 @@ export const TrackerPlugin = Plugin.define({
         });
         tools.add({
           name: "tracking_report",
-          options: { permission: "orchestration_tracking" },
+          options: { permission: "orchestration_tracking", codemode: false },
           description:
             "Read-only report for one Bead, selected sessions, and/or an intersecting time range.",
           input: input({
