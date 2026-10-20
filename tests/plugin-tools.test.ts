@@ -73,6 +73,12 @@ describe("stable tracker tools", () => {
       "tracking_closeout",
       "tracking_report",
     ]);
+    expect(registered.map((tool) => tool.options?.permission)).toEqual([
+      "orchestration_tracking",
+      "orchestration_tracking",
+      "orchestration_tracking",
+      "orchestration_tracking",
+    ]);
     expect(registered[0].input.required).toEqual(["beadID"]);
     expect(registered[1].input.required).toEqual(["runID", "sessionID"]);
     expect(registered.every((tool) => tool.output)).toBe(true);
