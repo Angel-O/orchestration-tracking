@@ -180,6 +180,45 @@ test("tracking_report selects standalone, child, epic, and intersecting session/
       to: 38,
     });
     expect(selected.output.report.metrics.activeMs).toBe(6);
+
+    // Cross-boundary matrix: every supplied selector dimension must survive normalization and delivery.
+    const selectorCases = [
+      { bead: "child-1", sessions: ["child-session"], from: 32, to: 38 },
+      { bead: "child-1", sessions: ["child-session"], from: 32 },
+      { bead: "child-1", sessions: ["child-session"], to: 38 },
+      { bead: "child-1", sessions: ["child-session"] },
+      { bead: "child-1", from: 32, to: 38 },
+      { bead: "child-1", from: 32 },
+      { bead: "child-1", to: 38 },
+      { sessions: ["child-session", "standalone-session"], from: 32, to: 68 },
+      { sessions: ["child-session", "standalone-session"], from: 32 },
+      { sessions: ["child-session", "standalone-session"], to: 38 },
+      { sessions: ["child-session", "standalone-session"] },
+      { from: 32, to: 68 },
+      { from: 32 },
+      { to: 38 },
+    ] as const;
+    for (const selector of selectorCases) {
+      const result = await execute(selector);
+      expect(result.output.report.selector).toEqual(selector);
+      expect(result.output.viewer.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/report\//u);
+    }
+    const emptySessions = await execute({ sessions: [] });
+    expect(emptySessions.output.report.selector).toEqual({ sessions: [] });
+    expect(emptySessions.output.report.metrics).toMatchObject({ sessionCount: 0, actionCount: 0 });
+
+    const combinedViewer = await execute({
+      bead: "child-1",
+      sessions: ["child-session"],
+      from: 32,
+      to: 38,
+    });
+    const combinedHtml = await (await fetch(combinedViewer.output.viewer.url)).text();
+    expect(combinedHtml).toContain("bead: child-1");
+    expect(combinedHtml).toContain("sessions: child-session");
+    expect(combinedHtml).toContain("from: 1970-01-01T00:00:00.032Z");
+    expect(combinedHtml).toContain("to: 1970-01-01T00:00:00.038Z");
+
     const bare = await execute({});
     expect(Object.hasOwn(bare.output, "viewer")).toBe(false);
     expect(bare.output.report.selector).toEqual({});
