@@ -53,6 +53,13 @@ local Bead, sessions, and an optional time range. A Bead selector automatically
 produces a standalone, child, or epic initiative report. Epic reports expose
 direct metrics and child summaries, not child lanes or action rows.
 
+`renderLegacyDetailHtml(detail)` is the pure self-contained HTML renderer. Its
+input is exactly `buildReportModels(...).legacyDetail`; it does not select,
+rebuild, or read tracker facts. The output uses inline CSS, escaped dynamic
+values, and no scripts, links, fonts, or network assets. Epic detail retains
+direct metrics and child summaries from that model while showing the captured
+legacy pass and timeline projection.
+
 The JSON view shape is selected by `report.kind`: standalone and child views
 include `sessions` and detailed `actions`, while epic views include only
 `children`. Epic metrics keep `directActiveMs`, `summedChildActiveMs`, and
