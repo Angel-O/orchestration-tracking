@@ -72,6 +72,14 @@ export {
 } from "./report.js";
 export { renderLegacyDetailHtml } from "./report-html.js";
 export {
+  createReportViewer,
+  launchReportViewerBrowser,
+  REPORT_VIEWER_LIFETIME_MS,
+  type ReportViewer,
+  type ReportViewerLauncher,
+  type ReportViewerOptions,
+} from "./report-viewer.js";
+export {
   AttributionTransitions,
   runWbdShow,
   validateAuthoritativeBead,

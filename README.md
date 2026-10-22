@@ -60,6 +60,14 @@ values, and no scripts, links, fonts, or network assets. Epic detail retains
 direct metrics and child summaries from that model while showing the captured
 legacy pass and timeline projection.
 
+`createReportViewer(store, selector)` is the narrow browser-delivery boundary.
+It freezes the normalized selector, listens on an IPv4 loopback random port,
+and returns `{ url, expiresAt, browserOpened, dispose }`. The server accepts
+only `GET`/`HEAD` for its exact token route, rebuilds from a fresh SQLite
+snapshot for every request, and disposes after ten minutes; `dispose` is
+idempotent. Browser launch is native and best-effort, and never changes the
+usable URL.
+
 The JSON view shape is selected by `report.kind`: standalone and child views
 include `sessions` and detailed `actions`, while epic views include only
 `children`. Epic metrics keep `directActiveMs`, `summedChildActiveMs`, and
