@@ -11,7 +11,9 @@ export {
 } from "./options.js";
 export {
   DATABASE_FILENAME,
+  RETENTION_CLEANUP_BATCH_SIZE,
   TrackerStore,
+  UNASSIGNED_RETENTION_MS,
   type ActionEnd,
   type ActionOutcome,
   type ActionRecord,
@@ -28,10 +30,12 @@ export {
   type LifecycleReceiptRecord,
   type ReportMetadata,
   type ReportMetadataRecord,
+  type RetentionCleanupResult,
   type SessionObservation,
   type SessionRecord,
   type TopologyRecord,
 } from "./store.js";
+export { LAUNCH_METADATA_KEY } from "./plugin.js";
 export { sourceReleasePlan, type SourceReleasePlan } from "./release.js";
 export { validateBeadID, parseTimestamp } from "./validation.js";
 export {

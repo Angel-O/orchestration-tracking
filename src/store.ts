@@ -10,6 +10,8 @@ export const DATABASE_FILENAME = "tracker-v2.sqlite";
 export type BeadType = "epic" | "task" | "bug" | "feature" | "chore";
 export type ActionOutcome = "open" | "completed" | "failed" | "interrupted" | "incomplete";
 export type AssociationSource = "creation" | "selection" | "launch-descriptor" | "inherited-lane";
+export const UNASSIGNED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+export const RETENTION_CLEANUP_BATCH_SIZE = 1_000;
 
 export interface SessionObservation {
   readonly sessionID: string;
@@ -146,6 +148,11 @@ export interface ReportMetadataRecord {
   readonly generatedAt: number;
 }
 
+export interface RetentionCleanupResult {
+  readonly slicesPruned: number;
+  readonly sessionsPruned: number;
+}
+
 type SessionRow = {
   session_id: string;
   parent_session_id: string | null;
@@ -160,6 +167,7 @@ type ActionRow = {
   ended_at: number | null;
   outcome: ActionOutcome;
   start_receipt_id: string | null;
+  end_receipt_id: string | null;
 };
 type SliceRow = {
   slice_id: number;
@@ -171,7 +179,7 @@ type SliceRow = {
   ended_at: number | null;
 };
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const SCHEMA = `
   CREATE TABLE sessions (
     session_id TEXT PRIMARY KEY,
@@ -199,6 +207,7 @@ const SCHEMA = `
     ended_at INTEGER,
     outcome TEXT NOT NULL CHECK (outcome IN ('open', 'completed', 'failed', 'interrupted', 'incomplete')),
     start_receipt_id TEXT,
+    end_receipt_id TEXT,
     PRIMARY KEY (session_id, action_id)
   );
   CREATE INDEX actions_open_by_session ON actions(session_id, outcome, started_at DESC);
@@ -228,6 +237,8 @@ const SCHEMA = `
     sequence INTEGER NOT NULL,
     event_type TEXT NOT NULL CHECK (event_type IN ('session.created', 'session.deleted', 'action.started', 'action.ended')),
     observed_at INTEGER NOT NULL,
+    session_id TEXT,
+    action_id TEXT,
     UNIQUE (aggregate_id, sequence)
   );
   CREATE INDEX lifecycle_receipts_by_aggregate ON lifecycle_receipts(aggregate_id, sequence);
@@ -396,8 +407,10 @@ export class TrackerStore {
     return this.immediate(() => {
       if (parentSessionID && parentSessionID !== sessionID)
         this.ensureSession(parentSessionID, undefined, observedAt);
-      this.ensureSession(sessionID, parentSessionID, observedAt);
-      if (input.receipt) this.insertLifecycleReceipt(input.receipt);
+      const created = this.ensureSession(sessionID, parentSessionID, observedAt);
+      if (created && parentSessionID)
+        this.inheritAttribution(sessionID, parentSessionID, observedAt);
+      if (input.receipt) this.insertLifecycleReceipt(input.receipt, sessionID);
       return rowToSession(this.sessionRow(sessionID)!);
     });
   }
@@ -414,19 +427,23 @@ export class TrackerStore {
       if (existing) return rowToAction(existing);
       if (input.receiptID) {
         if (
-          !this.insertLifecycleReceipt({
-            eventID: input.receiptID,
-            aggregateID: actionID,
-            sequence: 0,
-            eventType: "action.started",
-            observedAt: startedAt,
-          })
+          !this.insertLifecycleReceipt(
+            {
+              eventID: input.receiptID,
+              aggregateID: actionID,
+              sequence: 0,
+              eventType: "action.started",
+              observedAt: startedAt,
+            },
+            sessionID,
+            actionID,
+          )
         )
           throw new Error("action start receipt already belongs to another observation");
       }
       this.db
         .query(
-          "INSERT INTO actions (session_id, action_id, observed_role, started_at, outcome, start_receipt_id) VALUES (?, ?, ?, ?, 'open', ?)",
+          "INSERT INTO actions (session_id, action_id, observed_role, started_at, outcome, start_receipt_id, end_receipt_id) VALUES (?, ?, ?, ?, 'open', ?, NULL)",
         )
         .run(sessionID, actionID, observedRole, startedAt, input.receiptID ?? null);
       const attribution = this.db
@@ -467,14 +484,18 @@ export class TrackerStore {
             .get(input.sessionID);
       if (!action || action.outcome !== "open") return false;
       if (
-        !this.insertLifecycleReceipt({ ...input, eventType: "action.ended", observedAt: endedAt })
+        !this.insertLifecycleReceipt(
+          { ...input, eventType: "action.ended", observedAt: endedAt },
+          action.session_id,
+          action.action_id,
+        )
       )
         return false;
       this.db
         .query(
-          "UPDATE actions SET ended_at = ?, outcome = ? WHERE session_id = ? AND action_id = ? AND outcome = 'open'",
+          "UPDATE actions SET ended_at = ?, outcome = ?, end_receipt_id = ? WHERE session_id = ? AND action_id = ? AND outcome = 'open'",
         )
-        .run(endedAt, input.outcome, action.session_id, action.action_id);
+        .run(endedAt, input.outcome, input.eventID, action.session_id, action.action_id);
       this.db
         .query(
           "UPDATE activity_slices SET ended_at = ? WHERE session_id = ? AND action_id = ? AND ended_at IS NULL",
@@ -505,7 +526,7 @@ export class TrackerStore {
     }
     if (identities.length === 0 && !receipt) return 0;
     return this.immediate(() => {
-      if (receipt && !this.insertLifecycleReceipt(receipt)) return 0;
+      if (receipt && !this.insertLifecycleReceipt(receipt, receipt.aggregateID)) return 0;
       let changes = 0;
       for (const identity of identities) {
         changes += this.db
@@ -564,6 +585,11 @@ export class TrackerStore {
         bead.type !== "epic"
       )
         throw new Error("concrete bead is closed");
+      if (
+        input.source === "launch-descriptor" &&
+        this.db.query("SELECT 1 FROM actions WHERE session_id = ? LIMIT 1").get(sessionID)
+      )
+        return false;
       const receipt = this.db
         .query(
           "INSERT OR IGNORE INTO association_receipts (receipt_id, session_id, bead_id, source, observed_at, source_receipt_id) VALUES (?, ?, ?, ?, ?, ?)",
@@ -713,6 +739,60 @@ export class TrackerStore {
     });
   }
 
+  /**
+   * Prune only closed, unassigned slices older than the local retention window.
+   * The bounded transaction leaves associated slices in mixed sessions untouched.
+   */
+  cleanupUnassigned(
+    now = Date.now(),
+    limit = RETENTION_CLEANUP_BATCH_SIZE,
+  ): RetentionCleanupResult {
+    const cutoff = timestamp(now) - UNASSIGNED_RETENTION_MS;
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new Error("cleanup limit must be positive");
+    return this.immediate(() => {
+      const slices = this.db
+        .query<{ slice_id: number }>(
+          "SELECT slice_id FROM activity_slices WHERE bead_id IS NULL AND ended_at IS NOT NULL AND ended_at < ? ORDER BY slice_id LIMIT ?",
+        )
+        .all(cutoff, limit);
+      for (const slice of slices)
+        this.db.query("DELETE FROM activity_slices WHERE slice_id = ?").run(slice.slice_id);
+
+      const emptyActions = this.db
+        .query<{
+          session_id: string;
+          action_id: string;
+          start_receipt_id: string | null;
+          end_receipt_id: string | null;
+        }>(
+          "SELECT session_id, action_id, start_receipt_id, end_receipt_id FROM actions WHERE ended_at IS NOT NULL AND started_at < ? AND NOT EXISTS (SELECT 1 FROM activity_slices WHERE activity_slices.session_id = actions.session_id AND activity_slices.action_id = actions.action_id) LIMIT ?",
+        )
+        .all(cutoff, limit);
+      for (const action of emptyActions) {
+        for (const receiptID of [action.start_receipt_id, action.end_receipt_id])
+          if (receiptID)
+            this.db.query("DELETE FROM lifecycle_receipts WHERE event_id = ?").run(receiptID);
+        this.db
+          .query("DELETE FROM actions WHERE session_id = ? AND action_id = ?")
+          .run(action.session_id, action.action_id);
+      }
+
+      const emptySessions = this.db
+        .query<{ session_id: string }>(
+          "SELECT session_id FROM sessions WHERE last_observed_at < ? AND NOT EXISTS (SELECT 1 FROM actions WHERE actions.session_id = sessions.session_id) AND NOT EXISTS (SELECT 1 FROM session_attributions WHERE session_attributions.session_id = sessions.session_id) LIMIT ?",
+        )
+        .all(cutoff, limit);
+      for (const session of emptySessions) {
+        this.db
+          .query("DELETE FROM lifecycle_receipts WHERE aggregate_id = ?")
+          .run(session.session_id);
+        this.db.query("DELETE FROM sessions WHERE session_id = ?").run(session.session_id);
+      }
+      return { slicesPruned: slices.length, sessionsPruned: emptySessions.length };
+    });
+  }
+
   listSessions(): SessionRecord[] {
     return this.db
       .query<SessionRow>("SELECT * FROM sessions ORDER BY session_id")
@@ -830,7 +910,7 @@ export class TrackerStore {
     sessionID: string,
     parentSessionID: string | undefined,
     observedAt: number,
-  ): void {
+  ): boolean {
     const existing = this.sessionRow(sessionID);
     if (existing) {
       this.db
@@ -838,18 +918,47 @@ export class TrackerStore {
           "UPDATE sessions SET parent_session_id = COALESCE(parent_session_id, ?), last_observed_at = MAX(last_observed_at, ?) WHERE session_id = ?",
         )
         .run(parentSessionID ?? null, observedAt, sessionID);
-      return;
+      return false;
     }
     this.db
       .query(
         "INSERT INTO sessions (session_id, parent_session_id, first_observed_at, last_observed_at) VALUES (?, ?, ?, ?)",
       )
       .run(sessionID, parentSessionID ?? null, observedAt, observedAt);
+    return true;
   }
-  private insertLifecycleReceipt(input: LifecycleReceipt): boolean {
+  private inheritAttribution(sessionID: string, parentSessionID: string, observedAt: number): void {
+    const parent = this.db
+      .query<{ bead_id: string; source: AssociationSource }>(
+        "SELECT bead_id, source FROM session_attributions WHERE session_id = ?",
+      )
+      .get(parentSessionID);
+    if (!parent) return;
+    const parentReceipt = this.db
+      .query<{ receipt_id: string }>(
+        "SELECT receipt_id FROM association_receipts WHERE session_id = ? AND bead_id = ? ORDER BY observed_at DESC, receipt_id DESC LIMIT 1",
+      )
+      .get(parentSessionID, parent.bead_id);
+    const receiptID = `inherit:${sessionID}`;
+    this.db
+      .query(
+        "INSERT OR IGNORE INTO association_receipts (receipt_id, session_id, bead_id, source, observed_at, source_receipt_id) VALUES (?, ?, ?, 'inherited-lane', ?, ?)",
+      )
+      .run(receiptID, sessionID, parent.bead_id, observedAt, parentReceipt?.receipt_id ?? null);
+    this.db
+      .query(
+        "INSERT OR IGNORE INTO session_attributions (session_id, bead_id, source, changed_at) VALUES (?, ?, 'inherited-lane', ?)",
+      )
+      .run(sessionID, parent.bead_id, observedAt);
+  }
+  private insertLifecycleReceipt(
+    input: LifecycleReceipt,
+    sessionID?: string,
+    actionID?: string,
+  ): boolean {
     const result = this.db
       .query(
-        "INSERT OR IGNORE INTO lifecycle_receipts (event_id, aggregate_id, sequence, event_type, observed_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO lifecycle_receipts (event_id, aggregate_id, sequence, event_type, observed_at, session_id, action_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         input.eventID,
@@ -857,6 +966,8 @@ export class TrackerStore {
         input.sequence,
         input.eventType,
         timestamp(input.observedAt),
+        sessionID ?? null,
+        actionID ?? null,
       );
     return result.changes === 1;
   }

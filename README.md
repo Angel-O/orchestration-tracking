@@ -60,6 +60,34 @@ validated concrete or epic closeout. Concrete closeout resets only the invoking
 session when it is currently associated with that exact Bead; epic closeout
 does not alter child workstreams.
 
+## Launch and retention contract
+
+The plugin checks the exact-session metadata key
+`orchestration-tracking.launch` immediately before the first action. A valid
+descriptor has exactly this shape:
+
+```json
+{
+  "version": 1,
+  "targetSessionID": "<exact-session-id>",
+  "beadID": "<canonical-bead-id>"
+}
+```
+
+The target must match the fetched session. The tracker validates the exact
+canonical Bead through the bounded argv-based authoritative Hub boundary and
+registers its immutable topology locally before admission. Only an admitted
+descriptor associates the first action and removes that one metadata key;
+malformed, inherited, mismatched, unavailable, or conflicting descriptors
+leave recording unassigned and non-blocking. A child session snapshots its
+parent's current attribution once when the child is first observed. Later
+parent changes do not rewrite the child, while an explicit association can
+override it.
+
+Closed unassigned slices older than 30 days are pruned in bounded local
+transactions. Mixed sessions retain their associated slices. Cleanup runs at
+startup and at most once per day during prompt activity; it never queries Hub.
+
 The plugin observes `session.created`, prompt action starts, session deletion,
 and terminal session execution events. A deletion event is the host lifecycle
 fact that permits recovery of that session's receipt-backed open actions;

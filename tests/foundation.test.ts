@@ -35,7 +35,7 @@ describe("clean-break private tracker foundation", () => {
     expect(database.query("PRAGMA foreign_key_list(actions)").all()).not.toHaveLength(0);
     expect(
       database.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version,
-    ).toBe(2);
+    ).toBe(3);
     const tables = database
       .query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all()

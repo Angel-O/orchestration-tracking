@@ -1,9 +1,112 @@
 import { Plugin } from "@opencode/plugin";
-import { AttributionTransitions } from "./attribution.js";
+import {
+  AttributionTransitions,
+  validateAuthoritativeBead,
+  type ValidatedBead,
+} from "./attribution.js";
 import { parseOptions } from "./options.js";
 import { TrackerStore } from "./store.js";
+import { validateBeadID } from "./validation.js";
 
 const PLUGIN_ID = "orchestration-tracking";
+export const LAUNCH_METADATA_KEY = "orchestration-tracking.launch";
+
+type LaunchDescriptor = {
+  readonly version: 1;
+  readonly targetSessionID: string;
+  readonly beadID: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseLaunchDescriptor(value: unknown): LaunchDescriptor {
+  if (!isRecord(value)) throw new Error("invalid launch descriptor");
+  const keys = Object.keys(value);
+  if (
+    keys.length !== 3 ||
+    !keys.every((key) => key === "version" || key === "targetSessionID" || key === "beadID")
+  )
+    throw new Error("invalid launch descriptor");
+  if (
+    value.version !== 1 ||
+    typeof value.targetSessionID !== "string" ||
+    value.targetSessionID.length === 0 ||
+    value.targetSessionID.length > 256
+  )
+    throw new Error("invalid launch descriptor");
+  return {
+    version: 1,
+    targetSessionID: value.targetSessionID,
+    beadID: validateBeadID(value.beadID),
+  };
+}
+
+async function consumeLaunchDescriptor(
+  sessionAPI: {
+    readonly update?: (input: {
+      readonly sessionID: string;
+      readonly metadata: Record<string, unknown>;
+    }) => Promise<unknown>;
+  },
+  store: TrackerStore,
+  session: HostSession,
+  observedAt: number,
+): Promise<void> {
+  const metadata = session.metadata;
+  if (!isRecord(metadata) || !Object.prototype.hasOwnProperty.call(metadata, LAUNCH_METADATA_KEY))
+    return;
+
+  let descriptor: LaunchDescriptor;
+  try {
+    descriptor = parseLaunchDescriptor(metadata[LAUNCH_METADATA_KEY]);
+    if (descriptor.targetSessionID !== session.id) throw new Error("launch target mismatch");
+    const bead = await validateAuthoritativeBead(descriptor.beadID);
+    const topologies: ValidatedBead[] = [];
+    if (bead.parentBeadID !== undefined) {
+      const parent = await validateAuthoritativeBead(bead.parentBeadID);
+      if (parent.type !== "epic" || parent.parentBeadID !== undefined)
+        throw new Error("authoritative parent topology is invalid");
+      topologies.push(parent);
+    }
+    topologies.push(bead);
+    const localBeads = new Map(store.listBeads().map((bead) => [bead.beadID, bead]));
+    for (const topology of topologies) {
+      const existing = localBeads.get(topology.beadID);
+      if (
+        existing &&
+        (existing.type !== topology.type ||
+          existing.parentBeadID !== (topology.parentBeadID ?? null))
+      )
+        throw new Error("authoritative validation conflicts with local topology");
+    }
+    for (const topology of topologies)
+      store.recordTopology({ ...topology, validatedAt: observedAt });
+    if (
+      !store.recordAssociation({
+        receiptID: `launch:${session.id}:v1`,
+        sessionID: session.id,
+        beadID: descriptor.beadID,
+        source: "launch-descriptor",
+        observedAt,
+      })
+    )
+      return;
+  } catch (error) {
+    diagnose("launch descriptor ignored; delivery continues", error);
+    return;
+  }
+
+  try {
+    const remaining = { ...metadata };
+    delete remaining[LAUNCH_METADATA_KEY];
+    if (!sessionAPI.update) throw new Error("session metadata update unavailable");
+    await sessionAPI.update({ sessionID: session.id, metadata: remaining });
+  } catch (error) {
+    diagnose("launch descriptor removal failed; delivery continues", error);
+  }
+}
 
 function diagnose(message: string, error: unknown): void {
   // Host identifiers and SQLite paths can be private; diagnostics intentionally expose only an error kind.
@@ -15,6 +118,7 @@ type HostSession = {
   readonly id: string;
   readonly parentID?: string;
   readonly agent?: string;
+  readonly metadata?: Record<string, unknown>;
 };
 
 type HostEvent = {
@@ -63,19 +167,51 @@ export const TrackerPlugin = Plugin.define({
     }
 
     try {
+      store.cleanupUnassigned();
+    } catch (error) {
+      diagnose("retention cleanup failed; delivery continues", error);
+    }
+    let lastCleanupAt = Date.now();
+    const maybeCleanup = (): void => {
+      const now = Date.now();
+      if (now - lastCleanupAt < 24 * 60 * 60 * 1000) return;
+      lastCleanupAt = now;
+      try {
+        store.cleanupUnassigned(now);
+      } catch (error) {
+        diagnose("retention cleanup failed; delivery continues", error);
+      }
+    };
+
+    try {
       await ctx.session.hook("prompt", async (event) => {
         try {
+          maybeCleanup();
           const hostSession = (await ctx.session.get({
             sessionID: event.sessionID,
           })) as HostSession;
+          const startedAt = Date.now();
           store.recordSession({
             sessionID: hostSession.id,
             parentSessionID: hostSession.parentID,
+            observedAt: startedAt,
           });
+          await consumeLaunchDescriptor(
+            ctx.session as unknown as {
+              readonly update: (input: {
+                readonly sessionID: string;
+                readonly metadata: Record<string, unknown>;
+              }) => Promise<unknown>;
+            },
+            store,
+            hostSession,
+            startedAt,
+          );
           store.startAction({
             sessionID: hostSession.id,
             actionID: event.messageID,
             observedRole: hostSession.agent,
+            startedAt,
             receiptID: event.messageID,
           });
         } catch (error) {
