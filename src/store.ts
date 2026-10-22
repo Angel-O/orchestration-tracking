@@ -1,11 +1,11 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import type { TrackerOptions } from "./options.js";
+import { mappingFor, type TrackerOptions } from "./options.js";
 import { validateBeadID } from "./validation.js";
 
-/** The clean-break database deliberately does not reuse the legacy tracker file. */
-export const DATABASE_FILENAME = "tracker-v2.sqlite";
+/** The clean-break database deliberately does not reuse the previous tracker generation. */
+export const DATABASE_FILENAME = "tracker-v3.sqlite";
 
 export type BeadType = "epic" | "task" | "bug" | "feature" | "chore";
 export type ActionOutcome = "open" | "completed" | "failed" | "interrupted" | "incomplete";
@@ -17,6 +17,8 @@ export interface SessionObservation {
   readonly sessionID: string;
   readonly parentSessionID?: string;
   readonly observedAt?: number;
+  /** A privacy-safe label only; source paths are rejected. */
+  readonly projectLabel?: string;
   /** Optional host receipt for session.created. No payload is accepted or stored. */
   readonly receipt?: LifecycleReceipt;
 }
@@ -84,6 +86,7 @@ export interface ReportMetadata {
 export interface SessionRecord {
   readonly sessionID: string;
   readonly parentSessionID: string | null;
+  readonly projectLabel: string;
   readonly firstObservedAt: number;
   readonly lastObservedAt: number;
 }
@@ -91,7 +94,11 @@ export interface SessionRecord {
 export interface ActionRecord {
   readonly sessionID: string;
   readonly actionID: string;
+  readonly passNumber: number;
   readonly observedRole: string;
+  readonly phaseKey: string;
+  readonly phaseLabel: string;
+  readonly repeatEligible: boolean;
   readonly startedAt: number;
   readonly endedAt: number | null;
   readonly outcome: ActionOutcome;
@@ -167,13 +174,19 @@ export interface RetentionCleanupResult {
 type SessionRow = {
   session_id: string;
   parent_session_id: string | null;
+  project_label: string;
+  next_pass_number: number;
   first_observed_at: number;
   last_observed_at: number;
 };
 type ActionRow = {
   session_id: string;
   action_id: string;
+  pass_number: number;
   observed_role: string;
+  phase_key: string;
+  phase_label: string;
+  repeat_eligible: number;
   started_at: number;
   ended_at: number | null;
   outcome: ActionOutcome;
@@ -190,11 +203,13 @@ type SliceRow = {
   ended_at: number | null;
 };
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 1;
 const SCHEMA = `
   CREATE TABLE sessions (
     session_id TEXT PRIMARY KEY,
     parent_session_id TEXT REFERENCES sessions(session_id) ON DELETE SET NULL,
+    project_label TEXT NOT NULL,
+    next_pass_number INTEGER NOT NULL,
     first_observed_at INTEGER NOT NULL,
     last_observed_at INTEGER NOT NULL
   );
@@ -213,7 +228,11 @@ const SCHEMA = `
   CREATE TABLE actions (
     session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
     action_id TEXT NOT NULL,
+    pass_number INTEGER NOT NULL,
     observed_role TEXT NOT NULL,
+    phase_key TEXT NOT NULL,
+    phase_label TEXT NOT NULL,
+    repeat_eligible INTEGER NOT NULL CHECK (repeat_eligible IN (0, 1)),
     started_at INTEGER NOT NULL,
     ended_at INTEGER,
     outcome TEXT NOT NULL CHECK (outcome IN ('open', 'completed', 'failed', 'interrupted', 'incomplete')),
@@ -221,6 +240,7 @@ const SCHEMA = `
     end_receipt_id TEXT,
     PRIMARY KEY (session_id, action_id)
   );
+  CREATE UNIQUE INDEX actions_pass_number ON actions(session_id, pass_number);
   CREATE INDEX actions_open_by_session ON actions(session_id, outcome, started_at DESC);
   CREATE TABLE activity_slices (
     slice_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -299,6 +319,20 @@ function nonEmpty(value: string, name: string): string {
   return value;
 }
 
+function projectLabel(value: string | undefined): string {
+  if (value === undefined) return "unknown";
+  if (
+    value.length === 0 ||
+    value.length > 256 ||
+    value.includes("/") ||
+    value.includes("\\") ||
+    value === "." ||
+    value === ".."
+  )
+    throw new Error("project label must be a private label");
+  return value;
+}
+
 function relativeArtifact(value: string): string {
   if (
     value.length === 0 ||
@@ -321,6 +355,7 @@ function rowToSession(row: SessionRow): SessionRecord {
   return {
     sessionID: row.session_id,
     parentSessionID: row.parent_session_id,
+    projectLabel: row.project_label,
     firstObservedAt: row.first_observed_at,
     lastObservedAt: row.last_observed_at,
   };
@@ -330,7 +365,11 @@ function rowToAction(row: ActionRow): ActionRecord {
   return {
     sessionID: row.session_id,
     actionID: row.action_id,
+    passNumber: row.pass_number,
     observedRole: row.observed_role,
+    phaseKey: row.phase_key,
+    phaseLabel: row.phase_label,
+    repeatEligible: row.repeat_eligible === 1,
     startedAt: row.started_at,
     endedAt: row.ended_at,
     outcome: row.outcome,
@@ -415,10 +454,11 @@ export class TrackerStore {
       ? nonEmpty(input.parentSessionID, "parentSessionID")
       : undefined;
     const observedAt = timestamp(input.observedAt);
+    const label = projectLabel(input.projectLabel);
     return this.immediate(() => {
       if (parentSessionID && parentSessionID !== sessionID)
-        this.ensureSession(parentSessionID, undefined, observedAt);
-      const created = this.ensureSession(sessionID, parentSessionID, observedAt);
+        this.ensureSession(parentSessionID, undefined, observedAt, label);
+      const created = this.ensureSession(sessionID, parentSessionID, observedAt, label);
       if (created && parentSessionID)
         this.inheritAttribution(sessionID, parentSessionID, observedAt);
       if (input.receipt) this.insertLifecycleReceipt(input.receipt, sessionID);
@@ -432,10 +472,20 @@ export class TrackerStore {
     const actionID = nonEmpty(input.actionID, "actionID");
     const startedAt = timestamp(input.startedAt);
     const observedRole = ROLES.has(input.observedRole ?? "") ? input.observedRole! : "unknown";
+    const mapping = mappingFor(this.options, observedRole);
     return this.immediate(() => {
       this.ensureSession(sessionID, undefined, startedAt);
       const existing = this.actionRow(sessionID, actionID);
       if (existing) return rowToAction(existing);
+      const nextPass = this.db
+        .query<{ next_pass_number: number }>(
+          "SELECT next_pass_number FROM sessions WHERE session_id = ?",
+        )
+        .get(sessionID)?.next_pass_number;
+      if (nextPass === undefined) throw new Error("session observation was not persisted");
+      this.db
+        .query("UPDATE sessions SET next_pass_number = ? WHERE session_id = ?")
+        .run(nextPass + 1, sessionID);
       if (input.receiptID) {
         if (
           !this.insertLifecycleReceipt(
@@ -454,9 +504,19 @@ export class TrackerStore {
       }
       this.db
         .query(
-          "INSERT INTO actions (session_id, action_id, observed_role, started_at, outcome, start_receipt_id, end_receipt_id) VALUES (?, ?, ?, ?, 'open', ?, NULL)",
+          "INSERT INTO actions (session_id, action_id, pass_number, observed_role, phase_key, phase_label, repeat_eligible, started_at, outcome, start_receipt_id, end_receipt_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, NULL)",
         )
-        .run(sessionID, actionID, observedRole, startedAt, input.receiptID ?? null);
+        .run(
+          sessionID,
+          actionID,
+          nextPass,
+          observedRole,
+          mapping.phaseKey,
+          mapping.phaseLabel,
+          mapping.repeatEligible ? 1 : 0,
+          startedAt,
+          input.receiptID ?? null,
+        );
       const attribution = this.db
         .query<{ bead_id: string; source: AssociationSource }>(
           "SELECT bead_id, source FROM session_attributions WHERE session_id = ?",
@@ -960,6 +1020,7 @@ export class TrackerStore {
     sessionID: string,
     parentSessionID: string | undefined,
     observedAt: number,
+    label = "unknown",
   ): boolean {
     const existing = this.sessionRow(sessionID);
     if (existing) {
@@ -972,9 +1033,9 @@ export class TrackerStore {
     }
     this.db
       .query(
-        "INSERT INTO sessions (session_id, parent_session_id, first_observed_at, last_observed_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO sessions (session_id, parent_session_id, project_label, next_pass_number, first_observed_at, last_observed_at) VALUES (?, ?, ?, 1, ?, ?)",
       )
-      .run(sessionID, parentSessionID ?? null, observedAt, observedAt);
+      .run(sessionID, parentSessionID ?? null, label, observedAt, observedAt);
     return true;
   }
   private inheritAttribution(sessionID: string, parentSessionID: string, observedAt: number): void {

@@ -20,7 +20,7 @@ function cleanup(directory: string, store: TrackerStore): void {
 describe("clean-break private tracker foundation", () => {
   test("creates only the new protected schema and never opens the legacy file", () => {
     const directory = mkdtempSync(join(tmpdir(), "tracker-schema-"));
-    writeFileSync(join(directory, "tracker.sqlite"), "legacy prompt response transcript");
+    writeFileSync(join(directory, "tracker-v2.sqlite"), "legacy prompt response transcript");
     const store = TrackerStore.open(parseOptions({ dataDir: directory }));
     const databasePath = join(directory, DATABASE_FILENAME);
     expect(existsSync(databasePath)).toBe(true);
@@ -35,7 +35,7 @@ describe("clean-break private tracker foundation", () => {
     expect(database.query("PRAGMA foreign_key_list(actions)").all()).not.toHaveLength(0);
     expect(
       database.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version,
-    ).toBe(3);
+    ).toBe(1);
     const tables = database
       .query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all()
@@ -53,7 +53,7 @@ describe("clean-break private tracker foundation", () => {
       "sqlite_sequence",
     ]);
     database.close();
-    expect(readFileSync(join(directory, "tracker.sqlite"), "utf8")).toContain("legacy prompt");
+    expect(readFileSync(join(directory, "tracker-v2.sqlite"), "utf8")).toContain("legacy prompt");
     cleanup(directory, { close: () => undefined } as TrackerStore);
   });
 
@@ -99,7 +99,11 @@ describe("clean-break private tracker foundation", () => {
       {
         sessionID: "session-1",
         actionID: "message-1",
+        passNumber: 1,
         observedRole: "worker",
+        phaseKey: "implementation",
+        phaseLabel: "Implementation",
+        repeatEligible: true,
         startedAt: 100,
         endedAt: 200,
         outcome: "completed",
@@ -132,7 +136,11 @@ describe("clean-break private tracker foundation", () => {
     expect(second.listActions()[0]).toEqual({
       sessionID: "session-1",
       actionID: "message-1",
+      passNumber: 1,
       observedRole: "unknown",
+      phaseKey: "unmapped",
+      phaseLabel: "Unmapped",
+      repeatEligible: false,
       startedAt: 100,
       endedAt: null,
       outcome: "open",
@@ -140,6 +148,103 @@ describe("clean-break private tracker foundation", () => {
     });
     second.close();
     cleanup(directory, store);
+  });
+
+  test("captures privacy-safe session labels and first-observation fact snapshots", () => {
+    const { directory, store } = fixture();
+    const initial = parseOptions({
+      dataDir: directory,
+      phaseMappings: {
+        worker: { phaseKey: "custom-work", phaseLabel: "Custom work", repeatEligible: false },
+      },
+    });
+    store.close();
+    const configured = TrackerStore.open(initial);
+    configured.recordSession({
+      sessionID: "session-1",
+      observedAt: 100,
+      projectLabel: "project-one",
+    });
+    expect(
+      configured.recordSession({
+        sessionID: "session-1",
+        observedAt: 200,
+        projectLabel: "project-two",
+      }),
+    ).toMatchObject({ projectLabel: "project-one" });
+    const first = configured.startAction({
+      sessionID: "session-1",
+      actionID: "message-1",
+      observedRole: "worker",
+      startedAt: 100,
+    });
+    const second = configured.startAction({
+      sessionID: "session-1",
+      actionID: "message-2",
+      observedRole: "unknown-agent",
+      startedAt: 200,
+    });
+    const replay = configured.startAction({
+      sessionID: "session-1",
+      actionID: "message-1",
+      observedRole: "reviewer",
+      startedAt: 300,
+    });
+    expect(first).toMatchObject({
+      passNumber: 1,
+      phaseKey: "custom-work",
+      phaseLabel: "Custom work",
+      repeatEligible: false,
+    });
+    expect(second).toMatchObject({
+      passNumber: 2,
+      phaseKey: "unmapped",
+      phaseLabel: "Unmapped",
+      repeatEligible: false,
+    });
+    expect(replay).toEqual(first);
+    expect(configured.readReportSnapshot()).toMatchObject({
+      sessions: [{ sessionID: "session-1", projectLabel: "project-one" }],
+      actions: [
+        { actionID: "message-1", passNumber: 1, phaseKey: "custom-work" },
+        { actionID: "message-2", passNumber: 2, phaseKey: "unmapped" },
+      ],
+    });
+    expect(() =>
+      configured.recordSession({
+        sessionID: "session-2",
+        projectLabel: "/private/project",
+        observedAt: 1,
+      }),
+    ).toThrow(/private label/);
+    configured.close();
+
+    const changed = TrackerStore.open(
+      parseOptions({
+        dataDir: directory,
+        phaseMappings: {
+          worker: { phaseKey: "changed-work", phaseLabel: "Changed work", repeatEligible: true },
+        },
+      }),
+    );
+    const later = changed.startAction({
+      sessionID: "session-1",
+      actionID: "message-3",
+      observedRole: "worker",
+      startedAt: 400,
+    });
+    expect(later).toMatchObject({
+      passNumber: 3,
+      phaseKey: "changed-work",
+      phaseLabel: "Changed work",
+      repeatEligible: true,
+    });
+    expect(changed.listActions()[0]).toMatchObject({
+      actionID: "message-1",
+      phaseKey: "custom-work",
+      repeatEligible: false,
+    });
+    cleanup(directory, changed);
   });
 
   test("recovers only explicitly identified stale actions with host receipts", () => {
@@ -344,6 +449,10 @@ describe("clean-break private tracker foundation", () => {
     let releaseEvent!: (event: unknown) => void;
     const context = {
       options: { dataDir: directory },
+      location: {
+        directory: "/private/project-worktree",
+        project: { directory: "/private/project-worktree" },
+      },
       session: {
         hook: async (
           _name: string,
@@ -375,6 +484,7 @@ describe("clean-break private tracker foundation", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     const store = TrackerStore.open(parseOptions({ dataDir: directory }));
     expect(store.listActions()).toHaveLength(1);
+    expect(store.listSessions()[0]?.projectLabel).toBe("project-worktree");
     expect(store.listActions()[0]?.observedRole).toBe("worker");
     expect(store.listActions()[0]?.outcome).toBe("incomplete");
     expect(store.listActions()[0]?.endedAt).toBe(null);

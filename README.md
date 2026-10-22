@@ -5,17 +5,18 @@ only privacy-safe lifecycle facts in a local private SQLite database.
 
 ## Foundation contract
 
-`TrackerStore` opens `tracker-v2.sqlite` below the configured absolute
-`dataDir`. This is a clean break from the previous tracker file: it never
-opens, migrates, or imports `tracker.sqlite`. The store creates a fresh schema
+`TrackerStore` opens `tracker-v3.sqlite` below the configured absolute
+`dataDir`. This is a clean break from the previous tracker generation: it never
+opens, migrates, or imports `tracker-v2.sqlite`. The store creates a fresh schema
 with foreign keys, WAL journaling, a five-second busy timeout, a private
 directory (`0700`), and a private database (`0600`).
 
 The raw records are:
 
-- `sessions`: opaque session identity, optional parent identity, and observed
-  time bounds;
-- `actions`: opaque host action identity, one fixed observed role, lifecycle
+- `sessions`: opaque session identity, optional parent identity, a privacy-safe
+  project label, and observed time bounds;
+- `actions`: opaque host action identity, a replay-stable per-session pass
+  number, one fixed observed role, captured phase mapping facts, lifecycle
   outcome, and authoritative start/end times;
 - `activity_slices`: action portions split at association boundaries;
 - `beads`: validated canonical ID, type, and immutable direct epic parent;
@@ -37,7 +38,7 @@ another store instance never performs recovery.
 The store accepts no prompts, responses, transcripts, context labels, tool
 payloads, tokens, Git metadata, filesystem paths, command output, titles,
 descriptions, or arbitrary event payloads. Report artifact paths are relative
-keys only. Association policy, phase classification, report rendering, Hub
+keys only. Association policy, report classification, report rendering, Hub
 validation, and managed workflow calls remain outside this foundation.
 
 ## Fixed local reporting contract
