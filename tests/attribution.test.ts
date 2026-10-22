@@ -38,7 +38,7 @@ function fakeWbd(directory: string, output: string): void {
 }
 
 describe("authoritative attribution transitions", () => {
-  test("registers only the approved mutation tool surface", async () => {
+  test("registers only the approved tracker tool surface", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tracker-tools-"));
     const registered: { name: string }[] = [];
     const context = {
@@ -64,6 +64,7 @@ describe("authoritative attribution transitions", () => {
       "tracking_bead_created",
       "tracking_bead_select",
       "tracking_closeout",
+      "tracking_report",
     ]);
     if (typeof cleanup === "function") await cleanup();
     rmSync(directory, { recursive: true, force: true });

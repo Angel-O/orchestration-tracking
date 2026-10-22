@@ -5,7 +5,7 @@ import {
   type ValidatedBead,
 } from "./attribution.js";
 import { parseOptions } from "./options.js";
-import { generateReport } from "./report.js";
+import { generateReport, type ReportGenerationResult, type ReportSelector } from "./report.js";
 import { TrackerStore } from "./store.js";
 import { validateBeadID } from "./validation.js";
 
@@ -156,6 +156,47 @@ function toolReceiptID(context: unknown, fallback: string): string {
   return fallback;
 }
 
+function parseReportSelector(value: unknown): ReportSelector {
+  if (value === undefined) return {};
+  if (!isRecord(value)) throw new Error("invalid report selector");
+  const allowed = new Set(["bead", "sessions", "from", "to"]);
+  if (Object.keys(value).some((key) => !allowed.has(key)))
+    throw new Error("invalid report selector");
+  if (value.bead !== undefined && typeof value.bead !== "string")
+    throw new Error("invalid report selector");
+  if (
+    value.sessions !== undefined &&
+    (!Array.isArray(value.sessions) ||
+      value.sessions.some((session) => typeof session !== "string"))
+  )
+    throw new Error("invalid report selector");
+  for (const key of ["from", "to"] as const) {
+    if (
+      value[key] !== undefined &&
+      (!Number.isSafeInteger(value[key]) || (value[key] as number) < 0)
+    )
+      throw new Error("invalid report selector");
+  }
+  const selector: { bead?: string; sessions?: string[]; from?: number; to?: number } = {};
+  if (value.bead !== undefined) selector.bead = value.bead;
+  if (value.sessions !== undefined) selector.sessions = value.sessions as string[];
+  if (value.from !== undefined) selector.from = value.from as number;
+  if (value.to !== undefined) selector.to = value.to as number;
+  return selector;
+}
+
+function reportToolResult(
+  result: ReportGenerationResult,
+): Omit<ReportGenerationResult, "artifactPath" | "renderedArtifactPath"> {
+  return {
+    reportID: result.reportID,
+    artifactKey: result.artifactKey,
+    renderedArtifactKey: result.renderedArtifactKey,
+    sourceHighWaterMark: result.sourceHighWaterMark,
+    report: result.report,
+  };
+}
+
 export const TrackerPlugin = Plugin.define({
   id: PLUGIN_ID,
   async setup(ctx) {
@@ -294,6 +335,33 @@ export const TrackerPlugin = Plugin.define({
             input: input({ beadID: { type: "string", minLength: 1 } }),
             output: transitionOutputSchema,
             execute: execute("closeout"),
+          });
+          tools.add({
+            name: "tracking_report",
+            options: { permission: "orchestration_tracking", codemode: false },
+            description: "Read a privacy-safe local tracker report.",
+            input: {
+              type: "object",
+              properties: {
+                bead: { type: "string", minLength: 1 },
+                sessions: { type: "array", items: { type: "string", minLength: 1 } },
+                from: { type: "integer", minimum: 0 },
+                to: { type: "integer", minimum: 0 },
+              },
+              required: [],
+              additionalProperties: false,
+            },
+            output: { type: "object", additionalProperties: true },
+            execute: async (rawArgs: unknown) => {
+              try {
+                return {
+                  output: reportToolResult(generateReport(store, parseReportSelector(rawArgs))),
+                };
+              } catch (error) {
+                diagnose("report generation failed; delivery continues", error);
+                return { output: { ok: false, changed: false } };
+              }
+            },
           });
         });
       }
