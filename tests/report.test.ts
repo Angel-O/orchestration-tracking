@@ -161,6 +161,15 @@ test("classifies fixed phases and separates direct, child, active, and elapsed m
       "open",
     ]);
     expect(epicModels.legacyDetail.durations.activeMs).toBe(450);
+    expect(epicModels.legacyDetail.metrics).toMatchObject({
+      directActiveMs: 150,
+      summedChildActiveMs: 300,
+      combinedActiveMs: 450,
+    });
+    expect(epicModels.legacyDetail.phaseTotals.coordination.activeMs).toBe(50);
+    expect(
+      epicModels.legacyDetail.children?.map((child) => [child.beadID, child.metrics.activeMs]),
+    ).toEqual([["child-1", 300]]);
     expect(epic.actions).toBeUndefined();
     const epicView = renderReport(epic);
     expect(epicView).toContain("## Metric cards");
