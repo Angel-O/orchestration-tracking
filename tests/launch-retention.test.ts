@@ -190,6 +190,117 @@ test("prunes old unassigned slices without deleting associated evidence", () => 
   }
 });
 
+test("prunes expired deleted-session incomplete activity without inventing an end", () => {
+  const { directory, store } = fixture();
+  try {
+    const now = UNASSIGNED_RETENTION_MS + 10_000;
+    store.recordTopology({ beadID: "bead-kept", type: "feature", validatedAt: 1 });
+
+    store.recordSession({ sessionID: "deleted", observedAt: 1 });
+    store.startAction({
+      sessionID: "deleted",
+      actionID: "old",
+      startedAt: 1,
+      receiptID: "old-start",
+    });
+    store.recoverStaleActions([{ sessionID: "deleted", actionID: "old" }], {
+      eventID: "deleted-receipt",
+      aggregateID: "deleted",
+      sequence: 1,
+      eventType: "session.deleted",
+      observedAt: 2,
+    });
+
+    store.recordSession({ sessionID: "mixed-incomplete", observedAt: 1 });
+    store.startAction({
+      sessionID: "mixed-incomplete",
+      actionID: "mixed-action",
+      startedAt: 1,
+      receiptID: "mixed-start",
+    });
+    store.recordAssociation({
+      receiptID: "mixed-association",
+      sessionID: "mixed-incomplete",
+      beadID: "bead-kept",
+      source: "selection",
+      observedAt: 5,
+    });
+    store.recoverStaleActions([{ sessionID: "mixed-incomplete", actionID: "mixed-action" }], {
+      eventID: "mixed-deleted",
+      aggregateID: "mixed-incomplete",
+      sequence: 1,
+      eventType: "session.deleted",
+      observedAt: 6,
+    });
+
+    store.recordSession({ sessionID: "associated-incomplete", observedAt: 1 });
+    store.recordAssociation({
+      receiptID: "associated-selection",
+      sessionID: "associated-incomplete",
+      beadID: "bead-kept",
+      source: "selection",
+      observedAt: 1,
+    });
+    store.startAction({
+      sessionID: "associated-incomplete",
+      actionID: "associated-action",
+      startedAt: 1,
+      receiptID: "associated-start",
+    });
+    store.recoverStaleActions(
+      [{ sessionID: "associated-incomplete", actionID: "associated-action" }],
+      {
+        eventID: "associated-deleted",
+        aggregateID: "associated-incomplete",
+        sequence: 1,
+        eventType: "session.deleted",
+        observedAt: 2,
+      },
+    );
+
+    expect(store.listActions().find(({ sessionID }) => sessionID === "deleted")).toMatchObject({
+      outcome: "incomplete",
+      endedAt: null,
+    });
+    expect(store.listActivitySlices().filter(({ sessionID }) => sessionID === "deleted")).toEqual([
+      {
+        sliceID: 1,
+        actionID: "old",
+        sessionID: "deleted",
+        beadID: null,
+        associationSource: null,
+        startedAt: 1,
+        endedAt: null,
+      },
+    ]);
+
+    expect(store.cleanupUnassigned(now, 100)).toEqual({ slicesPruned: 2, sessionsPruned: 1 });
+    expect(
+      store
+        .listActions()
+        .map(({ sessionID, outcome, endedAt }) => ({ sessionID, outcome, endedAt })),
+    ).toEqual([
+      { sessionID: "associated-incomplete", outcome: "incomplete", endedAt: null },
+      { sessionID: "mixed-incomplete", outcome: "incomplete", endedAt: null },
+    ]);
+    expect(
+      store
+        .listActivitySlices()
+        .filter(({ sessionID }) => sessionID !== "deleted")
+        .map(({ sessionID, beadID, endedAt }) => ({ sessionID, beadID, endedAt })),
+    ).toEqual([
+      { sessionID: "mixed-incomplete", beadID: "bead-kept", endedAt: null },
+      { sessionID: "associated-incomplete", beadID: "bead-kept", endedAt: null },
+    ]);
+    const lifecycleIDs = store.listLifecycleReceipts().map(({ eventID }) => eventID);
+    expect(lifecycleIDs).not.toContain("old-start");
+    expect(lifecycleIDs).toContain("mixed-start");
+    expect(lifecycleIDs).toContain("associated-start");
+  } finally {
+    dispose(directory, store);
+  }
+});
+
 test("admits a valid exact-session descriptor before the first action", async () => {
   const directory = mkdtempSync(join(tmpdir(), "tracker-plugin-launch-"));
   fakeWbd(directory, '{"id":"bead-launch","issue_type":"task"}');

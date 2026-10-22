@@ -751,7 +751,8 @@ export class TrackerStore {
   }
 
   /**
-   * Prune only closed, unassigned slices older than the local retention window.
+   * Prune expired unassigned slices, including recovered incomplete actions.
+   * Incomplete actions age from their start and keep a NULL end timestamp.
    * The bounded transaction leaves associated slices in mixed sessions untouched.
    */
   cleanupUnassigned(
@@ -764,9 +765,9 @@ export class TrackerStore {
     return this.immediate(() => {
       const slices = this.db
         .query<{ slice_id: number }>(
-          "SELECT slice_id FROM activity_slices WHERE bead_id IS NULL AND ended_at IS NOT NULL AND ended_at < ? ORDER BY slice_id LIMIT ?",
+          "SELECT slice_id FROM activity_slices WHERE bead_id IS NULL AND ( (ended_at IS NOT NULL AND ended_at < ?) OR (ended_at IS NULL AND EXISTS (SELECT 1 FROM actions WHERE actions.session_id = activity_slices.session_id AND actions.action_id = activity_slices.action_id AND actions.outcome = 'incomplete' AND actions.started_at < ?)) ) ORDER BY slice_id LIMIT ?",
         )
-        .all(cutoff, limit);
+        .all(cutoff, cutoff, limit);
       for (const slice of slices)
         this.db.query("DELETE FROM activity_slices WHERE slice_id = ?").run(slice.slice_id);
 
@@ -777,7 +778,7 @@ export class TrackerStore {
           start_receipt_id: string | null;
           end_receipt_id: string | null;
         }>(
-          "SELECT session_id, action_id, start_receipt_id, end_receipt_id FROM actions WHERE ended_at IS NOT NULL AND started_at < ? AND NOT EXISTS (SELECT 1 FROM activity_slices WHERE activity_slices.session_id = actions.session_id AND activity_slices.action_id = actions.action_id) LIMIT ?",
+          "SELECT session_id, action_id, start_receipt_id, end_receipt_id FROM actions WHERE started_at < ? AND (ended_at IS NOT NULL OR outcome = 'incomplete') AND NOT EXISTS (SELECT 1 FROM activity_slices WHERE activity_slices.session_id = actions.session_id AND activity_slices.action_id = actions.action_id) LIMIT ?",
         )
         .all(cutoff, limit);
       for (const action of emptyActions) {

@@ -117,9 +117,11 @@ parent's current attribution once when the child is first observed. Later
 parent changes do not rewrite the child, while an explicit association can
 override it.
 
-Closed unassigned slices older than 30 days are pruned in bounded local
-transactions. Mixed sessions retain their associated slices. Cleanup runs at
-startup and at most once per day during prompt activity; it never queries Hub.
+Closed unassigned slices and recovered incomplete unassigned actions older than
+30 days are pruned in bounded local transactions. Incomplete actions retain a
+NULL end timestamp; their start time supplies the retention boundary. Mixed
+sessions retain their associated slices. Cleanup runs at startup and at most
+once per day during prompt activity; it never queries Hub.
 
 The plugin observes `session.created`, prompt action starts, session deletion,
 and terminal session execution events. A deletion event is the host lifecycle
