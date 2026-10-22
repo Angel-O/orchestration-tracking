@@ -34,3 +34,12 @@ export {
 } from "./store.js";
 export { sourceReleasePlan, type SourceReleasePlan } from "./release.js";
 export { validateBeadID, parseTimestamp } from "./validation.js";
+export {
+  AttributionTransitions,
+  runWbdShow,
+  validateAuthoritativeBead,
+  type TransitionContext,
+  type TransitionResult,
+  type ValidatedBead,
+  type WbdShowRunner,
+} from "./attribution.js";

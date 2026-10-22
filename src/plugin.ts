@@ -1,4 +1,5 @@
 import { Plugin } from "@opencode/plugin";
+import { AttributionTransitions } from "./attribution.js";
 import { parseOptions } from "./options.js";
 import { TrackerStore } from "./store.js";
 
@@ -29,6 +30,26 @@ type HostEvent = {
   };
   readonly durable?: { readonly aggregateID?: string; readonly seq?: number };
 };
+
+const transitionOutputSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    changed: { type: "boolean" },
+  },
+  required: ["ok", "changed"],
+  additionalProperties: false,
+} as const;
+
+function toolReceiptID(context: unknown, fallback: string): string {
+  if (context && typeof context === "object") {
+    const value = context as Record<string, unknown>;
+    for (const key of ["toolCallID", "callID", "messageID"]) {
+      if (typeof value[key] === "string" && value[key].length > 0) return value[key];
+    }
+  }
+  return fallback;
+}
 
 export const TrackerPlugin = Plugin.define({
   id: PLUGIN_ID,
@@ -61,6 +82,76 @@ export const TrackerPlugin = Plugin.define({
           diagnose("action observation failed; delivery continues", error);
         }
       });
+
+      let toolRegistration: { dispose: () => unknown } | undefined;
+      if (ctx.tool) {
+        const transitions = new AttributionTransitions(store);
+        toolRegistration = await ctx.tool.transform((tools) => {
+          const input = (properties: Record<string, unknown>) => ({
+            type: "object",
+            properties,
+            required: ["beadID"],
+            additionalProperties: false,
+          });
+          const execute =
+            (operation: "created" | "select" | "closeout") =>
+            async (rawArgs: unknown, context: unknown) => {
+              try {
+                const args =
+                  rawArgs && typeof rawArgs === "object"
+                    ? (rawArgs as Record<string, unknown>)
+                    : {};
+                const sessionID =
+                  context && typeof context === "object"
+                    ? (context as Record<string, unknown>).sessionID
+                    : undefined;
+                if (typeof sessionID !== "string" || sessionID.length === 0)
+                  return { output: { ok: false, changed: false } };
+                const beadID = args.beadID;
+                const receiptID = toolReceiptID(
+                  context,
+                  `tracking-${operation}:${sessionID}:${Date.now()}`,
+                );
+                const transitionContext = { sessionID, receiptID, observedAt: Date.now() };
+                const result =
+                  operation === "created"
+                    ? await transitions.beadCreated(beadID, transitionContext)
+                    : operation === "select"
+                      ? await transitions.beadSelected(beadID, transitionContext)
+                      : await transitions.closeout(beadID, transitionContext);
+                return { output: result };
+              } catch (error) {
+                diagnose(`${operation} attribution failed; delivery continues`, error);
+                return { output: { ok: false, changed: false } };
+              }
+            };
+
+          tools.add({
+            name: "tracking_bead_created",
+            options: { permission: "orchestration_tracking", codemode: false },
+            description: "Register a newly created, authoritatively validated Bead.",
+            input: input({ beadID: { type: "string", minLength: 1 } }),
+            output: transitionOutputSchema,
+            execute: execute("created"),
+          });
+          tools.add({
+            name: "tracking_bead_select",
+            options: { permission: "orchestration_tracking", codemode: false },
+            description: "Explicitly associate the invoking session with a validated Bead.",
+            input: input({ beadID: { type: "string", minLength: 1 } }),
+            output: transitionOutputSchema,
+            execute: execute("select"),
+          });
+          tools.add({
+            name: "tracking_closeout",
+            options: { permission: "orchestration_tracking", codemode: false },
+            description: "Record tracker closeout for an authoritatively validated Bead.",
+            input: input({ beadID: { type: "string", minLength: 1 } }),
+            output: transitionOutputSchema,
+            execute: execute("closeout"),
+          });
+        });
+      }
 
       const abort = new AbortController();
       void (async () => {
@@ -128,6 +219,7 @@ export const TrackerPlugin = Plugin.define({
       return () => {
         abort.abort();
         store.close();
+        void toolRegistration?.dispose();
       };
     } catch (error) {
       store.close();

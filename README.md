@@ -40,6 +40,26 @@ descriptions, or arbitrary event payloads. Report artifact paths are relative
 keys only. Association policy, phase classification, report rendering, Hub
 validation, and managed workflow calls remain outside this foundation.
 
+## Attribution transitions
+
+The tracker exposes three mutation tools: `tracking_bead_created`,
+`tracking_bead_select`, and `tracking_closeout`. Each accepts only `{ beadID }`;
+the tracker runs `wbd show <beadID> --json` with argv arguments, a short timeout,
+and bounded output, then requires exactly one record whose canonical `id`
+matches. Bead type and direct epic parent are derived from that record, never
+from tool input. Unsupported, ambiguous, unavailable, or conflicting records
+produce content-free non-blocking failure results.
+
+Creation registers immutable topology. A parentless Bead associates the
+invoking root and may reclassify only that root's preceding unassigned slices
+as scoping. A published child registers its validated parent without changing
+the publishing epic attribution or creating child activity. Explicit selection
+starts at the tool receipt boundary and never revises earlier slices; selecting
+the active Bead and replaying a receipt are no-ops. Closeout records the first
+validated concrete or epic closeout. Concrete closeout resets only the invoking
+session when it is currently associated with that exact Bead; epic closeout
+does not alter child workstreams.
+
 The plugin observes `session.created`, prompt action starts, session deletion,
 and terminal session execution events. A deletion event is the host lifecycle
 fact that permits recovery of that session's receipt-backed open actions;

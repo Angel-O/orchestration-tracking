@@ -571,16 +571,37 @@ export class TrackerStore {
         .run(receiptID, sessionID, beadID, input.source, observedAt, input.sourceReceiptID ?? null);
       if (receipt.changes !== 1) return false;
       const current = this.db
-        .query<{ bead_id: string; source: AssociationSource }>(
-          "SELECT bead_id, source FROM session_attributions WHERE session_id = ?",
+        .query<{ bead_id: string; source: AssociationSource; changed_at: number }>(
+          "SELECT bead_id, source, changed_at FROM session_attributions WHERE session_id = ?",
         )
         .get(sessionID);
-      if (current?.bead_id === beadID && current.source === input.source) return true;
+      if (current?.bead_id === beadID) return false;
       const actions = this.db
         .query<ActionRow>("SELECT * FROM actions WHERE session_id = ? AND outcome = 'open'")
         .all(sessionID);
+
+      if (input.source === "creation") {
+        // Creation is the one approved exception to forward-only attribution:
+        // only this root's preceding unassigned slices become scoping.
+        this.db
+          .query(
+            "UPDATE activity_slices SET bead_id = ?, association_source = ? WHERE session_id = ? AND bead_id IS NULL AND started_at <= ?",
+          )
+          .run(beadID, input.source, sessionID, observedAt);
+      }
       for (const action of actions) {
-        const boundary = Math.max(observedAt, action.started_at);
+        const currentSlice = this.db
+          .query<{ bead_id: string | null; started_at: number }>(
+            "SELECT bead_id, started_at FROM activity_slices WHERE session_id = ? AND action_id = ? AND ended_at IS NULL ORDER BY slice_id DESC LIMIT 1",
+          )
+          .get(sessionID, action.action_id);
+        if (
+          input.source === "creation" &&
+          currentSlice?.bead_id === beadID &&
+          currentSlice.started_at <= observedAt
+        )
+          continue;
+        const boundary = Math.max(observedAt, action.started_at, current?.changed_at ?? 0);
         this.db
           .query(
             "UPDATE activity_slices SET ended_at = ? WHERE session_id = ? AND action_id = ? AND ended_at IS NULL",
@@ -594,7 +615,7 @@ export class TrackerStore {
       }
       this.db
         .query(
-          "INSERT INTO session_attributions (session_id, bead_id, source, changed_at) VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET bead_id = excluded.bead_id, source = excluded.source, changed_at = excluded.changed_at",
+          "INSERT INTO session_attributions (session_id, bead_id, source, changed_at) VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET bead_id = excluded.bead_id, source = excluded.source, changed_at = MAX(session_attributions.changed_at, excluded.changed_at)",
         )
         .run(sessionID, beadID, input.source, observedAt);
       return true;
