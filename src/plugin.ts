@@ -7,6 +7,12 @@ import {
 } from "./attribution.js";
 import { parseOptions } from "./options.js";
 import { generateReport, type ReportGenerationResult, type ReportSelector } from "./report.js";
+import {
+  createReportViewer,
+  type ReportViewer,
+  type ReportViewerMetadata,
+  type ReportViewerOptions,
+} from "./report-viewer.js";
 import { TrackerStore } from "./store.js";
 import { validateBeadID } from "./validation.js";
 
@@ -152,6 +158,16 @@ const transitionOutputSchema = {
   properties: {
     ok: { type: "boolean" },
     changed: { type: "boolean" },
+    viewer: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        expiresAt: { type: "integer" },
+        browserOpened: { type: "boolean" },
+      },
+      required: ["url", "expiresAt", "browserOpened"],
+      additionalProperties: false,
+    },
   },
   required: ["ok", "changed"],
   additionalProperties: false,
@@ -205,6 +221,14 @@ function reportToolResult(
     renderedArtifactKey: result.renderedArtifactKey,
     sourceHighWaterMark: result.sourceHighWaterMark,
     report: result.report,
+  };
+}
+
+function reportViewerMetadata(viewer: ReportViewer): ReportViewerMetadata {
+  return {
+    url: viewer.url,
+    expiresAt: viewer.expiresAt,
+    browserOpened: viewer.browserOpened,
   };
 }
 
@@ -277,6 +301,36 @@ export const TrackerPlugin = Plugin.define({
       });
 
       let toolRegistration: { dispose: () => unknown } | undefined;
+      const viewers = new Set<ReportViewer>();
+      const pendingViewerDeliveries = new Set<Promise<ReportViewerMetadata>>();
+      const viewerAbort = new AbortController();
+      let disposed = false;
+      let cleanupPromise: Promise<void> | undefined;
+      // Internal host seam used by focused tests; production uses viewer defaults.
+      const viewerOptions = (
+        ctx as unknown as { readonly reportViewerOptions?: ReportViewerOptions }
+      ).reportViewerOptions;
+      const deliverViewer = (selector: ReportSelector): Promise<ReportViewerMetadata> => {
+        const delivery = (async () => {
+          if (disposed) throw new Error("report viewer delivery disposed");
+          const viewer = await createReportViewer(store, selector, {
+            ...viewerOptions,
+            signal: viewerAbort.signal,
+          });
+          if (disposed) {
+            viewer.dispose();
+            throw new Error("report viewer delivery disposed");
+          }
+          viewers.add(viewer);
+          return reportViewerMetadata(viewer);
+        })();
+        pendingViewerDeliveries.add(delivery);
+        delivery.then(
+          () => pendingViewerDeliveries.delete(delivery),
+          () => pendingViewerDeliveries.delete(delivery),
+        );
+        return delivery;
+      };
       if (ctx.tool) {
         const transitions = new AttributionTransitions(store);
         toolRegistration = await ctx.tool.transform((tools) => {
@@ -318,6 +372,13 @@ export const TrackerPlugin = Plugin.define({
                   } catch (error) {
                     // Closeout is already committed; report/render failure must not block delivery.
                     diagnose("closeout report regeneration failed; delivery continues", error);
+                  }
+                  try {
+                    const viewer = await deliverViewer({ bead: validateBeadID(beadID) });
+                    return { output: { ...result, viewer } };
+                  } catch (error) {
+                    // Closeout is already committed; viewer failure must not block delivery.
+                    diagnose("closeout report viewer failed; delivery continues", error);
                   }
                 }
                 return { output: result };
@@ -369,9 +430,17 @@ export const TrackerPlugin = Plugin.define({
             output: { type: "object", additionalProperties: true },
             execute: async (rawArgs: unknown) => {
               try {
-                return {
-                  output: reportToolResult(generateReport(store, parseReportSelector(rawArgs))),
-                };
+                const selector = parseReportSelector(rawArgs);
+                const output = reportToolResult(generateReport(store, selector));
+                if (Object.keys(selector).length === 0) return { output };
+                try {
+                  const viewer = await deliverViewer(selector);
+                  return { output: { ...output, viewer } };
+                } catch (error) {
+                  // Viewer failure is additive; the structured report remains usable.
+                  diagnose("report viewer failed; delivery continues", error);
+                }
+                return { output };
               } catch (error) {
                 diagnose("report generation failed; delivery continues", error);
                 return { output: { ok: false, changed: false } };
@@ -445,10 +514,29 @@ export const TrackerPlugin = Plugin.define({
         if (!abort.signal.aborted) diagnose("event subscription stopped", error);
       });
 
-      return () => {
-        abort.abort();
+      const finishCleanup = (): void => {
+        for (const viewer of viewers) viewer.dispose();
+        viewers.clear();
         store.close();
         void toolRegistration?.dispose();
+      };
+      return () => {
+        if (cleanupPromise !== undefined) return cleanupPromise;
+        disposed = true;
+        abort.abort();
+        viewerAbort.abort();
+        for (const viewer of viewers) viewer.dispose();
+        viewers.clear();
+        const pending = [...pendingViewerDeliveries];
+        if (pending.length === 0) {
+          finishCleanup();
+          return;
+        }
+        cleanupPromise = Promise.allSettled(pending).then(() => {
+          pendingViewerDeliveries.clear();
+          finishCleanup();
+        });
+        return cleanupPromise;
       };
     } catch (error) {
       store.close();

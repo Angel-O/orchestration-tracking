@@ -77,6 +77,7 @@ export {
   REPORT_VIEWER_LIFETIME_MS,
   type ReportViewer,
   type ReportViewerLauncher,
+  type ReportViewerMetadata,
   type ReportViewerOptions,
 } from "./report-viewer.js";
 export {

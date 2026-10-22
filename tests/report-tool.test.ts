@@ -5,6 +5,7 @@ import { expect, test } from "bun:test";
 import { parseOptions } from "../src/options.js";
 import { TrackerPlugin } from "../src/plugin.js";
 import { TrackerStore } from "../src/store.js";
+import type { ReportViewerOptions } from "../src/report-viewer.js";
 
 type ReportTool = {
   readonly name: string;
@@ -28,7 +29,10 @@ function endAction(
   });
 }
 
-async function setupReportTool(directory: string): Promise<{
+async function setupReportTool(
+  directory: string,
+  reportViewerOptions: ReportViewerOptions = { launch: () => false },
+): Promise<{
   readonly tools: readonly ReportTool[];
   readonly cleanup: unknown;
 }> {
@@ -46,9 +50,52 @@ async function setupReportTool(directory: string): Promise<{
       },
     },
     event: { subscribe: async function* () {} },
+    reportViewerOptions,
   };
   return { tools, cleanup: await TrackerPlugin.setup(context as never) };
 }
+
+test("disposal overlaps browser launch without registering a late viewer", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tracker-report-tool-overlap-"));
+  let started!: () => void;
+  let releaseLaunch!: (opened: boolean) => void;
+  let launchedURL = "";
+  const launchStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const launch = (url: string): Promise<boolean> => {
+    launchedURL = url;
+    started();
+    return new Promise((resolve) => {
+      releaseLaunch = resolve;
+    });
+  };
+  const { tools, cleanup } = await setupReportTool(directory, { launch });
+  try {
+    const execute = reportTool(tools);
+    const reportPromise = execute({ sessions: ["session-overlap"] });
+    await launchStarted;
+
+    const dispose = cleanup as () => void | Promise<void>;
+    const disposal = dispose();
+    let closed = false;
+    try {
+      await fetch(launchedURL);
+    } catch {
+      closed = true;
+    }
+    expect(closed).toBe(true);
+    releaseLaunch(true);
+    await disposal;
+
+    const result = await reportPromise;
+    expect(result.output.report.selector).toEqual({ sessions: ["session-overlap"] });
+    expect(Object.hasOwn(result.output, "viewer")).toBe(false);
+  } finally {
+    if (typeof cleanup === "function") await cleanup();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 function reportTool(tools: readonly ReportTool[]): NonNullable<ReportTool["execute"]> {
   const tool = tools.find((candidate) => candidate.name === "tracking_report");
@@ -58,6 +105,7 @@ function reportTool(tools: readonly ReportTool[]): NonNullable<ReportTool["execu
 
 test("tracking_report selects standalone, child, epic, and intersecting session/time reports", async () => {
   const directory = mkdtempSync(join(tmpdir(), "tracker-report-tool-"));
+  let viewerURL: string | undefined;
   const store = TrackerStore.open(parseOptions({ dataDir: directory }));
   store.recordTopology({ beadID: "epic-1", type: "epic", validatedAt: 1 });
   store.recordTopology({ beadID: "child-1", type: "task", parentBeadID: "epic-1", validatedAt: 1 });
@@ -116,6 +164,10 @@ test("tracking_report selects standalone, child, epic, and intersecting session/
     expect(standalone.output.report.kind).toBe("standalone");
     expect(standalone.output.artifactKey).toMatch(/^reports\/report-[a-f0-9]+\.json$/u);
     expect(standalone.output.renderedArtifactKey).toMatch(/^reports\/report-[a-f0-9]+\.md$/u);
+    expect(standalone.output.viewer.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/report\//u);
+    expect(typeof standalone.output.viewer.expiresAt).toBe("number");
+    expect(standalone.output.viewer.browserOpened).toBe(false);
+    viewerURL = standalone.output.viewer.url;
     expect(Object.hasOwn(standalone.output, "artifactPath")).toBe(false);
     expect(Object.hasOwn(standalone.output, "renderedArtifactPath")).toBe(false);
     expect((await execute({ bead: "child-1" })).output.report.kind).toBe("child");
@@ -128,8 +180,20 @@ test("tracking_report selects standalone, child, epic, and intersecting session/
       to: 38,
     });
     expect(selected.output.report.metrics.activeMs).toBe(6);
+    const bare = await execute({});
+    expect(Object.hasOwn(bare.output, "viewer")).toBe(false);
+    expect(bare.output.report.selector).toEqual({});
   } finally {
     if (typeof cleanup === "function") cleanup();
+    if (viewerURL !== undefined) {
+      let disposed = false;
+      try {
+        await fetch(viewerURL);
+      } catch {
+        disposed = true;
+      }
+      expect(disposed).toBe(true);
+    }
     rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -158,6 +222,7 @@ test("tracking_report rejects invalid selectors and does not mutate raw lifecycl
 
     const valid = await execute({ sessions: ["session-1"] });
     expect(valid.output.report.kind).toBe("sessions");
+    expect(valid.output.viewer.browserOpened).toBe(false);
     const afterValid = TrackerStore.open(parseOptions({ dataDir: directory }));
     expect(afterValid.listReports()).toHaveLength(reportsBefore + 1);
     afterValid.close();
@@ -168,6 +233,7 @@ test("tracking_report rejects invalid selectors and does not mutate raw lifecycl
     const result = await execute({ bead: "bead-1", unsupported: true });
     console.warn = originalWarn;
     expect(result.output).toEqual({ ok: false, changed: false });
+    expect(Object.hasOwn(result.output, "viewer")).toBe(false);
     expect(warnings.join(" ")).toContain("report generation failed; delivery continues");
     expect(warnings.join(" ")).not.toContain("bead-1");
     expect(warnings.join(" ")).not.toContain(directory);

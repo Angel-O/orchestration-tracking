@@ -801,6 +801,7 @@ printf '%s' '${JSON.stringify({
           },
         },
         event: { subscribe: async function* () {} },
+        reportViewerOptions: { launch: () => true },
       };
       const cleanupPlugin = await TrackerPlugin.setup(pluginContext as never);
       if (!promptHook) throw new Error("prompt hook was not registered");
@@ -829,7 +830,15 @@ printf '%s' '${JSON.stringify({
         rmSync(commandDirectory, { recursive: true, force: true });
       }
       expect(hubSucceeded).toBe(true);
-      expect(closeoutResult).toEqual({ output: { ok: true, changed: true } });
+      const output = closeoutResult.output as {
+        ok: boolean;
+        changed: boolean;
+        viewer: { url: string; browserOpened: boolean };
+      };
+      expect(output.ok).toBe(true);
+      expect(output.changed).toBe(true);
+      expect(output.viewer.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/report\//u);
+      expect(output.viewer.browserOpened).toBe(true);
       expect(deliveryCompleted).toBe(true);
       expect(closeoutDiagnostics).toEqual([
         "[orchestration-tracking] closeout report regeneration failed; delivery continues: Error",
