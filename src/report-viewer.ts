@@ -10,9 +10,18 @@ export const REPORT_VIEWER_LIFETIME_MS = 10 * 60 * 1000;
 
 export type ReportViewerLauncher = (url: string) => boolean | Promise<boolean>;
 
+/** Additive tool metadata for a live viewer; disposal remains plugin-owned. */
+export interface ReportViewerMetadata {
+  readonly url: string;
+  readonly expiresAt: number;
+  readonly browserOpened: boolean;
+}
+
 export interface ReportViewerOptions {
   /** Test seam; production callers should use the native default. */
   readonly launch?: ReportViewerLauncher;
+  /** Abort pending startup and dispose a server owned by the caller. */
+  readonly signal?: AbortSignal;
   /** Test seams for the fixed post-listen lifetime. */
   readonly now?: () => number;
   readonly setTimeout?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
@@ -23,10 +32,7 @@ export interface ReportViewerOptions {
  * One immutable-selector, IPv4-loopback report delivery. `dispose` is safe to
  * call repeatedly; the server never accepts selector or file overrides.
  */
-export interface ReportViewer {
-  readonly url: string;
-  readonly expiresAt: number;
-  readonly browserOpened: boolean;
+export interface ReportViewer extends ReportViewerMetadata {
   readonly dispose: () => void;
 }
 
@@ -92,24 +98,86 @@ function emptyResponse(response: ServerResponse, status: number): void {
   response.end();
 }
 
-function listen(server: Server): Promise<AddressInfo> {
+function aborted(): Error {
+  return new Error("report viewer creation aborted");
+}
+
+function listen(server: Server, signal?: AbortSignal): Promise<AddressInfo> {
   return new Promise((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const fail = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
     const onError = (error: Error) => {
       server.off("listening", onListening);
-      reject(error);
+      fail(error);
     };
     const onListening = () => {
       server.off("error", onError);
-      const address = server.address();
-      if (address === null || typeof address === "string") {
-        reject(new Error("loopback viewer did not expose an IPv4 address"));
+      if (signal?.aborted) {
+        onAbort();
         return;
       }
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        fail(new Error("loopback viewer did not expose an IPv4 address"));
+        return;
+      }
+      cleanup();
       resolve(address);
     };
+    const onAbort = () => {
+      try {
+        server.close();
+      } catch {
+        // The server may have lost the listen race; either way it is not usable.
+      }
+      fail(aborted());
+    };
+    if (signal?.aborted) {
+      fail(aborted());
+      return;
+    }
     server.once("error", onError);
     server.once("listening", onListening);
+    signal?.addEventListener("abort", onAbort, { once: true });
     server.listen({ host: "127.0.0.1", port: 0 });
+  });
+}
+
+function launchWithAbort(
+  launch: ReportViewerLauncher,
+  url: string,
+  signal: AbortSignal,
+  dispose: () => void,
+): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const onAbort = () => {
+      dispose();
+      finish(() => reject(aborted()));
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      Promise.resolve(launch(url)).then(
+        (opened) => finish(() => resolve(opened)),
+        () => finish(() => resolve(false)),
+      );
+    } catch {
+      finish(() => resolve(false));
+    }
   });
 }
 
@@ -127,6 +195,7 @@ export async function createReportViewer(
   let disposed = false;
   let expectedHost = "";
   let dispose: () => void = () => undefined;
+  let abortListener: (() => void) | undefined;
 
   const server = createServer((request, response) => {
     if (disposed || request.headers.host !== expectedHost) {
@@ -155,7 +224,7 @@ export async function createReportViewer(
   });
 
   try {
-    const address = await listen(server);
+    const address = await listen(server, options.signal);
     expectedHost = `127.0.0.1:${address.port}`;
     const url = `http://${expectedHost}${path}`;
     const expiresAt = now() + REPORT_VIEWER_LIFETIME_MS;
@@ -165,17 +234,37 @@ export async function createReportViewer(
     dispose = () => {
       if (disposed) return;
       disposed = true;
+      if (abortListener !== undefined) options.signal?.removeEventListener("abort", abortListener);
       if (timer !== undefined) clearTimer(timer);
       server.close();
     };
+    if (options.signal !== undefined) {
+      abortListener = () => dispose();
+      options.signal.addEventListener("abort", abortListener, { once: true });
+      if (options.signal.aborted) {
+        dispose();
+        throw aborted();
+      }
+    }
     timer = setTimer(() => dispose(), REPORT_VIEWER_LIFETIME_MS);
 
     const launch = options.launch ?? launchReportViewerBrowser;
     let browserOpened = false;
     try {
-      browserOpened = await launch(url);
+      browserOpened =
+        options.signal === undefined
+          ? await launch(url)
+          : await launchWithAbort(launch, url, options.signal, dispose);
     } catch {
+      if (options.signal?.aborted) {
+        dispose();
+        throw aborted();
+      }
       browserOpened = false;
+    }
+    if (options.signal?.aborted) {
+      dispose();
+      throw aborted();
     }
     if (!browserOpened) diagnostic("report viewer browser launch failed");
     return { url, expiresAt, browserOpened, dispose };
