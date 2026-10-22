@@ -137,3 +137,31 @@ bun run lint
 bun run typecheck
 bun test tests/foundation.test.ts
 ```
+
+## Deterministic simulations
+
+`tests/simulation.test.ts` is the end-to-end validation seam. It uses fixed
+timestamps and injected authoritative validators, so it does not query live
+Hub state or depend on a running orchestration environment. The six scenarios
+cover:
+
+- standalone creation, explicit resume, switching, concrete closeout, and
+  sequential post-closeout creation;
+- epic decomposition/publication, inherited and overridden attribution, child
+  delivery phases, direct-versus-child metrics, child closeout from an
+  epic-associated coordinator, and epic closeout;
+- lifecycle/report replay, stable report identity, mixed-session retention, and
+  bounded cleanup;
+- unchanged-fact regeneration with advancing open detailed and initiative
+  windows;
+- database/WAL/report/diagnostic privacy scans using distinct category
+  sentinels, including a detectable full-path sentinel; and
+- injected authoritative-validation, database, descriptor-removal, and
+  post-closeout report/render failures that leave the host operation
+  non-blocking.
+
+Run the focused simulation and affected source tests with:
+
+```sh
+bun test tests/simulation.test.ts tests/foundation.test.ts tests/attribution.test.ts tests/launch-retention.test.ts tests/report.test.ts
+```
