@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -31,6 +31,12 @@ function runner(records: Record<string, unknown>[]): {
   };
 }
 
+function fakeWbd(directory: string, output: string): void {
+  const command = join(directory, "wbd");
+  writeFileSync(command, `#!/bin/sh\nprintf '%s' '${output}'\n`);
+  chmodSync(command, 0o700);
+}
+
 describe("authoritative attribution transitions", () => {
   test("registers only the approved mutation tool surface", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tracker-tools-"));
@@ -61,6 +67,135 @@ describe("authoritative attribution transitions", () => {
     ]);
     if (typeof cleanup === "function") await cleanup();
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("regenerates reports through the real closeout tool path", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tracker-closeout-report-"));
+    fakeWbd(directory, '{"id":"bead-close","issue_type":"task"}');
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${directory}:${originalPath ?? ""}`;
+    let promptHook:
+      | ((event: { readonly sessionID: string; readonly messageID: string }) => Promise<void>)
+      | undefined;
+    const registered: Array<{
+      readonly name: string;
+      readonly execute?: (args: unknown, context: unknown) => Promise<{ output: unknown }>;
+    }> = [];
+    const context = {
+      options: { dataDir: directory },
+      session: {
+        hook: async (
+          _name: string,
+          callback: (event: { sessionID: string; messageID: string }) => Promise<void>,
+        ) => {
+          promptHook = callback;
+          return { dispose: async () => undefined };
+        },
+        get: async () => ({ id: "root", parentID: undefined, agent: "orchestrator" }),
+      },
+      tool: {
+        transform: async (
+          callback: (tools: { add: (tool: (typeof registered)[number]) => void }) => void,
+        ) => {
+          callback({ add: (tool) => registered.push(tool) });
+          return { dispose: async () => undefined };
+        },
+      },
+      event: { subscribe: async function* () {} },
+    };
+    const cleanup = await TrackerPlugin.setup(context as never);
+    try {
+      if (!promptHook) throw new Error("prompt hook was not registered");
+      await promptHook({ sessionID: "root", messageID: "message-1" });
+      const closeout = registered.find((tool) => tool.name === "tracking_closeout");
+      if (!closeout?.execute) throw new Error("closeout tool was not registered");
+      const result = await closeout.execute(
+        { beadID: "bead-close" },
+        { sessionID: "root", toolCallID: "closeout-call" },
+      );
+      expect(result.output).toEqual({ ok: true, changed: true });
+      expect(existsSync(join(directory, "reports"))).toBe(true);
+      const files = readdirSync(join(directory, "reports"));
+      expect(files).toHaveLength(2);
+      expect(files.some((file) => file.endsWith(".json"))).toBe(true);
+      expect(files.some((file) => file.endsWith(".md"))).toBe(true);
+    } finally {
+      process.env.PATH = originalPath;
+      if (typeof cleanup === "function") cleanup();
+      const store = TrackerStore.open(parseOptions({ dataDir: directory }));
+      expect(store.listCloseouts().map(({ beadID, kind }) => [beadID, kind])).toEqual([
+        ["bead-close", "concrete"],
+      ]);
+      store.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("continues delivery when closeout report regeneration fails", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tracker-closeout-report-failure-"));
+    fakeWbd(directory, '{"id":"bead-fail","issue_type":"task"}');
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${directory}:${originalPath ?? ""}`;
+    let promptHook:
+      | ((event: { readonly sessionID: string; readonly messageID: string }) => Promise<void>)
+      | undefined;
+    const registered: Array<{
+      readonly name: string;
+      readonly execute?: (args: unknown, context: unknown) => Promise<{ output: unknown }>;
+    }> = [];
+    const context = {
+      options: { dataDir: directory },
+      session: {
+        hook: async (
+          _name: string,
+          callback: (event: { sessionID: string; messageID: string }) => Promise<void>,
+        ) => {
+          promptHook = callback;
+          return { dispose: async () => undefined };
+        },
+        get: async () => ({ id: "root", parentID: undefined, agent: "orchestrator" }),
+      },
+      tool: {
+        transform: async (
+          callback: (tools: { add: (tool: (typeof registered)[number]) => void }) => void,
+        ) => {
+          callback({ add: (tool) => registered.push(tool) });
+          return { dispose: async () => undefined };
+        },
+      },
+      event: { subscribe: async function* () {} },
+    };
+    const cleanup = await TrackerPlugin.setup(context as never);
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+    try {
+      if (!promptHook) throw new Error("prompt hook was not registered");
+      await promptHook({ sessionID: "root", messageID: "message-1" });
+      writeFileSync(join(directory, "reports"), "not-a-directory");
+      const closeout = registered.find((tool) => tool.name === "tracking_closeout");
+      if (!closeout?.execute) throw new Error("closeout tool was not registered");
+      const result = await closeout.execute(
+        { beadID: "bead-fail" },
+        { sessionID: "root", toolCallID: "closeout-call" },
+      );
+      expect(result.output).toEqual({ ok: true, changed: true });
+      expect(warnings.join(" ")).toContain(
+        "closeout report regeneration failed; delivery continues",
+      );
+      expect(warnings.join(" ")).not.toContain("bead-fail");
+      expect(warnings.join(" ")).not.toContain(directory);
+    } finally {
+      console.warn = originalWarn;
+      process.env.PATH = originalPath;
+      if (typeof cleanup === "function") cleanup();
+      const store = TrackerStore.open(parseOptions({ dataDir: directory }));
+      expect(store.listCloseouts().map(({ beadID, kind }) => [beadID, kind])).toEqual([
+        ["bead-fail", "concrete"],
+      ]);
+      store.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("uses bounded argv validation and exact canonical matching", async () => {

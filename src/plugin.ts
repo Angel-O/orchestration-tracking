@@ -5,6 +5,7 @@ import {
   type ValidatedBead,
 } from "./attribution.js";
 import { parseOptions } from "./options.js";
+import { generateReport } from "./report.js";
 import { TrackerStore } from "./store.js";
 import { validateBeadID } from "./validation.js";
 
@@ -255,6 +256,14 @@ export const TrackerPlugin = Plugin.define({
                     : operation === "select"
                       ? await transitions.beadSelected(beadID, transitionContext)
                       : await transitions.closeout(beadID, transitionContext);
+                if (operation === "closeout" && result.ok) {
+                  try {
+                    generateReport(store, { bead: validateBeadID(beadID) });
+                  } catch (error) {
+                    // Closeout is already committed; report/render failure must not block delivery.
+                    diagnose("closeout report regeneration failed; delivery continues", error);
+                  }
+                }
                 return { output: result };
               } catch (error) {
                 diagnose(`${operation} attribution failed; delivery continues`, error);
