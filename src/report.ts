@@ -207,6 +207,10 @@ export interface LegacyDetailModel {
   readonly generatedAt: number;
   readonly finalizedAt: number | null;
   readonly selection: NormalizedSelector;
+  /** Current structured metrics retained for epic direct/child rendering. */
+  readonly metrics: ReportMetrics;
+  readonly phaseTotals: Readonly<Record<ReportPhase, PhaseMetric>>;
+  readonly children?: readonly ChildSummary[];
   readonly projectLabel: string | null;
   readonly projectLabels: readonly string[];
   readonly durations: {
@@ -999,6 +1003,9 @@ function legacyDetail(
     generatedAt: now,
     finalizedAt,
     selection: report.selector,
+    metrics: report.metrics,
+    phaseTotals: report.phaseTotals,
+    ...(report.children === undefined ? {} : { children: report.children }),
     projectLabel: projectLabels.length === 1 ? projectLabels[0]! : null,
     projectLabels,
     durations: {
