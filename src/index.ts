@@ -70,6 +70,7 @@ export {
   type ReportSelector,
   type ReportSession,
 } from "./report.js";
+export { renderLegacyDetailHtml } from "./report-html.js";
 export {
   AttributionTransitions,
   runWbdShow,
