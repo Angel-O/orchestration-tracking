@@ -1,5 +1,4 @@
-export { default } from "./plugin.js";
-export { LAUNCH_METADATA_KEY, TrackerPlugin } from "./plugin.js";
+export { default, TrackerPlugin } from "./plugin.js";
 export {
   DEFAULT_PHASE_MAPPINGS,
   SCHEMA_VERSION,
@@ -11,25 +10,63 @@ export {
   type TrackerOptions,
 } from "./options.js";
 export {
+  DATABASE_FILENAME,
+  RETENTION_CLEANUP_BATCH_SIZE,
   TrackerStore,
-  type AdmitInput,
-  type ExecutionInput,
-  type PassOutcome,
-  type PassRecord,
-  type SessionInput,
+  UNASSIGNED_RETENTION_MS,
+  type ActionEnd,
+  type ActionOutcome,
+  type ActionRecord,
+  type ActionStart,
+  type ActivitySliceRecord,
+  type AssociationReceiptRecord,
+  type AssociationRecord,
   type AssociationSource,
-  type ReportData,
-  type ReportPass,
-  type ReportRecord,
-  type ReportSelector,
-  type RunRecord,
+  type BeadRecord,
+  type BeadType,
+  type CloseoutRecord,
+  type CloseoutRecordView,
+  type LifecycleReceipt,
+  type LifecycleReceiptRecord,
+  type ReportMetadata,
+  type ReportMetadataRecord,
+  type ReportSnapshot,
+  type RetentionCleanupResult,
+  type SessionObservation,
+  type SessionRecord,
+  type TopologyRecord,
 } from "./store.js";
-export {
-  formatDuration,
-  normalizeSelector,
-  renderReport,
-  writeReport,
-  type ReportResult,
-} from "./report.js";
+export { LAUNCH_METADATA_KEY } from "./plugin.js";
 export { sourceReleasePlan, type SourceReleasePlan } from "./release.js";
 export { validateBeadID, parseTimestamp } from "./validation.js";
+export {
+  generateReport,
+  renderReport,
+  PRIVACY_NOTICE,
+  REPORT_NOTICES,
+  REPORTING_POLICY_VERSION,
+  REPORT_PHASES,
+  type ChildSummary,
+  type InitiativeState,
+  type LifecycleState,
+  type NormalizedSelector,
+  type OutcomeCounts,
+  type PhaseMetric,
+  type ReportAction,
+  type ReportDocument,
+  type ReportGenerationResult,
+  type ReportKind,
+  type ReportMetrics,
+  type ReportPhase,
+  type ReportSelector,
+  type ReportSession,
+} from "./report.js";
+export {
+  AttributionTransitions,
+  runWbdShow,
+  validateAuthoritativeBead,
+  type TransitionContext,
+  type TransitionResult,
+  type ValidatedBead,
+  type WbdShowRunner,
+} from "./attribution.js";

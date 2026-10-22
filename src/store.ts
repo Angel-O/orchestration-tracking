@@ -1,718 +1,1053 @@
-import { mkdirSync, chmodSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { Database } from "bun:sqlite";
-import { mappingFor, type PhaseMapping, type TrackerOptions } from "./options.js";
+import type { TrackerOptions } from "./options.js";
 import { validateBeadID } from "./validation.js";
 
-export type PassOutcome = "open" | "completed" | "failed" | "interrupted" | "incomplete";
-export type AssociationSource = "root" | "parent-chain" | "explicit-primary";
-export interface SessionInput {
+/** The clean-break database deliberately does not reuse the legacy tracker file. */
+export const DATABASE_FILENAME = "tracker-v2.sqlite";
+
+export type BeadType = "epic" | "task" | "bug" | "feature" | "chore";
+export type ActionOutcome = "open" | "completed" | "failed" | "interrupted" | "incomplete";
+export type AssociationSource = "creation" | "selection" | "launch-descriptor" | "inherited-lane";
+export const UNASSIGNED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+export const RETENTION_CLEANUP_BATCH_SIZE = 1_000;
+
+export interface SessionObservation {
   readonly sessionID: string;
-  readonly parentID?: string;
-  readonly projectID: string;
-  readonly workspaceID?: string;
-  readonly projectLabel: string;
+  readonly parentSessionID?: string;
   readonly observedAt?: number;
+  /** Optional host receipt for session.created. No payload is accepted or stored. */
+  readonly receipt?: LifecycleReceipt;
 }
-export interface AdmitInput extends SessionInput {
-  readonly messageID: string;
-  readonly agent?: string;
-  readonly startedAt?: number;
-}
-export interface PassRecord {
-  readonly id: number;
+
+export interface ActionStart {
   readonly sessionID: string;
-  readonly passNumber: number;
-  readonly messageID: string;
-  readonly observedAgent: string | null;
-  readonly phaseKey: string;
-  readonly phaseLabel: string;
-  readonly repeatEligible: boolean;
-  readonly startedAt: number;
-  readonly endedAt: number | null;
-  readonly outcome: PassOutcome;
+  readonly actionID: string;
+  readonly observedRole?: string;
+  readonly startedAt?: number;
+  readonly receiptID?: string;
 }
-export interface ExecutionInput {
+
+export interface ActionEnd {
   readonly eventID: string;
   readonly aggregateID: string;
   readonly sequence: number;
   readonly sessionID: string;
-  readonly outcome: Exclude<PassOutcome, "open" | "incomplete">;
+  readonly actionID?: string;
+  readonly outcome: Exclude<ActionOutcome, "open" | "incomplete">;
   readonly endedAt: number;
-  readonly session?: SessionInput;
 }
-export interface RunRecord {
-  readonly runID: string;
-  readonly rootSessionID: string;
-  readonly beadID: string | null;
-  readonly projectLabel: string;
-  readonly status: "open" | "finalized";
-  readonly startedAt: number;
-  readonly endedAt: number | null;
-  readonly workStartedAt: number | null;
-  readonly workEndedAt: number | null;
-  readonly reportPath: string | null;
+
+export interface LifecycleReceipt {
+  readonly eventID: string;
+  readonly aggregateID: string;
+  readonly sequence: number;
+  readonly eventType: "session.created" | "session.deleted" | "action.started" | "action.ended";
+  readonly observedAt: number;
 }
-export interface ReportSelector {
-  readonly bead?: string;
-  readonly sessions?: string[];
-  readonly from?: number;
-  readonly to?: number;
+
+export interface TopologyRecord {
+  readonly beadID: string;
+  readonly type: BeadType;
+  readonly parentBeadID?: string;
+  readonly validatedAt?: number;
 }
-export interface ReportPass {
+
+export interface AssociationRecord {
+  readonly receiptID: string;
   readonly sessionID: string;
-  readonly observedAgent: string;
-  readonly phaseKey: string;
-  readonly phaseLabel: string;
-  readonly phaseColor: string;
-  readonly passNumber: number;
+  readonly beadID: string;
+  readonly source: AssociationSource;
+  readonly observedAt?: number;
+  readonly sourceReceiptID?: string;
+}
+
+export interface CloseoutRecord {
+  readonly receiptID: string;
+  readonly beadID: string;
+  /** The invoking session, when closeout should reset its exact concrete attribution. */
+  readonly sessionID?: string;
+  readonly closedAt?: number;
+}
+
+export interface ReportMetadata {
+  readonly reportID: string;
+  /** Relative private artifact key; absolute filesystem paths are rejected. */
+  readonly artifactPath: string;
+  readonly selectorFingerprint: string;
+  readonly policyVersion: string;
+  readonly sourceHighWaterMark: number;
+  readonly generatedAt?: number;
+}
+
+export interface SessionRecord {
+  readonly sessionID: string;
+  readonly parentSessionID: string | null;
+  readonly firstObservedAt: number;
+  readonly lastObservedAt: number;
+}
+
+export interface ActionRecord {
+  readonly sessionID: string;
+  readonly actionID: string;
+  readonly observedRole: string;
   readonly startedAt: number;
   readonly endedAt: number | null;
-  readonly durationMs: number;
-  readonly leftPercent: number;
-  readonly widthPercent: number;
-  readonly outcome: PassOutcome;
+  readonly outcome: ActionOutcome;
+  readonly startReceiptID: string | null;
 }
-export interface ReportData {
-  readonly beadID?: string;
-  readonly projectLabel: string;
-  readonly status: "open" | "finalized";
-  readonly selection: ReportSelector;
-  readonly generatedAt: number;
-  readonly finalizedAt: number | null;
-  readonly timeScale: { readonly start: number; readonly end: number };
-  readonly summary: {
-    readonly elapsedMs: number;
-    readonly activeMs: number;
-    readonly passes: number;
-  };
-  readonly phases: Array<{
-    label: string;
-    agents: string[];
-    passes: number;
-    activeMs: number;
-    color: string;
-  }>;
-  readonly observedAgents: Array<{ agent: string; passes: number; activeMs: number }>;
-  readonly lanes: Array<{
-    sessionID: string;
-    passes: number;
-    activeMs: number;
-    outcomes: string[];
-    segments: ReportPass[];
-  }>;
-  readonly passes: ReportPass[];
-  readonly outcomes: Record<string, number>;
-  readonly repeats: Array<{
-    agent: string;
-    sessionID: string;
-    phaseLabel: string;
-    passes: number;
-    repeated: boolean;
-  }>;
-  readonly warnings: string[];
+
+export interface ActivitySliceRecord {
+  readonly sliceID: number;
+  readonly actionID: string;
+  readonly sessionID: string;
+  readonly beadID: string | null;
+  readonly associationSource: AssociationSource | null;
+  readonly startedAt: number;
+  readonly endedAt: number | null;
 }
-export interface ReportRecord {
+
+export interface BeadRecord {
+  readonly beadID: string;
+  readonly type: BeadType;
+  readonly parentBeadID: string | null;
+  readonly validatedAt: number;
+}
+
+export interface AssociationReceiptRecord {
+  readonly receiptID: string;
+  readonly sessionID: string;
+  readonly beadID: string;
+  readonly source: AssociationSource;
+  readonly observedAt: number;
+  readonly sourceReceiptID: string | null;
+}
+
+export interface LifecycleReceiptRecord {
+  readonly eventID: string;
+  readonly aggregateID: string;
+  readonly sequence: number;
+  readonly eventType: string;
+  readonly observedAt: number;
+}
+
+export interface CloseoutRecordView {
+  readonly receiptID: string;
+  readonly beadID: string;
+  readonly kind: "epic" | "concrete";
+  readonly closedAt: number;
+}
+
+export interface ReportMetadataRecord {
   readonly reportID: string;
-  readonly kind: "bead" | "ad-hoc";
-  readonly beadID?: string;
-  readonly path: string;
+  readonly artifactPath: string;
+  readonly selectorFingerprint: string;
+  readonly policyVersion: string;
+  readonly sourceHighWaterMark: number;
   readonly generatedAt: number;
 }
-interface PassRow {
-  id: number;
+
+/** One read transaction containing every raw fact used by report generation. */
+export interface ReportSnapshot {
+  readonly sessions: readonly SessionRecord[];
+  readonly actions: readonly ActionRecord[];
+  readonly slices: readonly ActivitySliceRecord[];
+  readonly beads: readonly BeadRecord[];
+  readonly associations: readonly AssociationReceiptRecord[];
+  readonly closeouts: readonly CloseoutRecordView[];
+  readonly sourceHighWaterMark: number;
+}
+
+export interface RetentionCleanupResult {
+  readonly slicesPruned: number;
+  readonly sessionsPruned: number;
+}
+
+type SessionRow = {
   session_id: string;
-  pass_number: number;
-  message_id: string;
-  observed_agent: string | null;
-  phase_key: string;
-  phase_label: string;
-  repeat_eligible: number;
+  parent_session_id: string | null;
+  first_observed_at: number;
+  last_observed_at: number;
+};
+type ActionRow = {
+  session_id: string;
+  action_id: string;
+  observed_role: string;
   started_at: number;
   ended_at: number | null;
-  outcome: PassOutcome;
-}
-interface SessionRow {
+  outcome: ActionOutcome;
+  start_receipt_id: string | null;
+  end_receipt_id: string | null;
+};
+type SliceRow = {
+  slice_id: number;
+  action_id: string;
   session_id: string;
-  parent_id: string | null;
-  project_label: string;
-}
-interface RunRow {
-  run_id: string;
-  root_session_id: string;
   bead_id: string | null;
-  project_label: string;
-  status: "open" | "finalized";
+  association_source: AssociationSource | null;
   started_at: number;
   ended_at: number | null;
-  work_started_at: number | null;
-  work_ended_at: number | null;
-  report_path: string | null;
+};
+
+const SCHEMA_VERSION = 3;
+const SCHEMA = `
+  CREATE TABLE sessions (
+    session_id TEXT PRIMARY KEY,
+    parent_session_id TEXT REFERENCES sessions(session_id) ON DELETE SET NULL,
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL
+  );
+  CREATE TABLE beads (
+    bead_id TEXT PRIMARY KEY,
+    bead_type TEXT NOT NULL CHECK (bead_type IN ('epic', 'task', 'bug', 'feature', 'chore')),
+    parent_bead_id TEXT REFERENCES beads(bead_id) ON DELETE RESTRICT,
+    validated_at INTEGER NOT NULL
+  );
+  CREATE TABLE session_attributions (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+    bead_id TEXT NOT NULL REFERENCES beads(bead_id) ON DELETE RESTRICT,
+    source TEXT NOT NULL CHECK (source IN ('creation', 'selection', 'launch-descriptor', 'inherited-lane')),
+    changed_at INTEGER NOT NULL
+  );
+  CREATE TABLE actions (
+    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    action_id TEXT NOT NULL,
+    observed_role TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    outcome TEXT NOT NULL CHECK (outcome IN ('open', 'completed', 'failed', 'interrupted', 'incomplete')),
+    start_receipt_id TEXT,
+    end_receipt_id TEXT,
+    PRIMARY KEY (session_id, action_id)
+  );
+  CREATE INDEX actions_open_by_session ON actions(session_id, outcome, started_at DESC);
+  CREATE TABLE activity_slices (
+    slice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    bead_id TEXT REFERENCES beads(bead_id) ON DELETE RESTRICT,
+    association_source TEXT CHECK (association_source IS NULL OR association_source IN ('creation', 'selection', 'launch-descriptor', 'inherited-lane')),
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    FOREIGN KEY (session_id, action_id) REFERENCES actions(session_id, action_id) ON DELETE CASCADE
+  );
+  CREATE INDEX slices_by_session ON activity_slices(session_id, started_at);
+  CREATE TABLE association_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    bead_id TEXT NOT NULL REFERENCES beads(bead_id) ON DELETE RESTRICT,
+    source TEXT NOT NULL CHECK (source IN ('creation', 'selection', 'launch-descriptor', 'inherited-lane')),
+    observed_at INTEGER NOT NULL,
+    source_receipt_id TEXT
+  );
+  CREATE INDEX association_receipts_by_session ON association_receipts(session_id, observed_at);
+  CREATE TABLE lifecycle_receipts (
+    event_id TEXT PRIMARY KEY,
+    aggregate_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('session.created', 'session.deleted', 'action.started', 'action.ended')),
+    observed_at INTEGER NOT NULL,
+    session_id TEXT,
+    action_id TEXT,
+    UNIQUE (aggregate_id, sequence)
+  );
+  CREATE INDEX lifecycle_receipts_by_aggregate ON lifecycle_receipts(aggregate_id, sequence);
+  CREATE TABLE closeouts (
+    bead_id TEXT PRIMARY KEY REFERENCES beads(bead_id) ON DELETE RESTRICT,
+    receipt_id TEXT NOT NULL UNIQUE,
+    closeout_kind TEXT NOT NULL CHECK (closeout_kind IN ('epic', 'concrete')),
+    closed_at INTEGER NOT NULL
+  );
+  CREATE TABLE reports (
+    report_id TEXT PRIMARY KEY,
+    artifact_path TEXT NOT NULL UNIQUE,
+    selector_fingerprint TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    source_high_water_mark INTEGER NOT NULL,
+    generated_at INTEGER NOT NULL
+  );
+`;
+
+const BEAD_TYPES = new Set<BeadType>(["epic", "task", "bug", "feature", "chore"]);
+const ASSOCIATION_SOURCES = new Set<AssociationSource>([
+  "creation",
+  "selection",
+  "launch-descriptor",
+  "inherited-lane",
+]);
+const ROLES = new Set([
+  "architect",
+  "plan",
+  "planner",
+  "orchestrator",
+  "worker",
+  "reviewer",
+  "integration",
+  "build",
+  "investigator",
+]);
+
+function nonEmpty(value: string, name: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 256 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)
+  )
+    throw new Error(`${name} must be a bounded identifier`);
+  return value;
 }
-const LATEST_SCHEMA = 3;
-const MIGRATION_1 = `CREATE TABLE sessions (session_id TEXT PRIMARY KEY, parent_id TEXT REFERENCES sessions(session_id) ON DELETE SET NULL, project_id TEXT NOT NULL, workspace_id TEXT, project_label TEXT NOT NULL, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL); CREATE TABLE passes (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, pass_number INTEGER NOT NULL, message_id TEXT NOT NULL, observed_agent TEXT, phase_key TEXT NOT NULL, phase_label TEXT NOT NULL, repeat_eligible INTEGER NOT NULL CHECK (repeat_eligible IN (0, 1)), started_at INTEGER NOT NULL, ended_at INTEGER, outcome TEXT NOT NULL CHECK (outcome IN ('open', 'completed', 'failed', 'interrupted', 'incomplete')), UNIQUE (session_id, pass_number), UNIQUE (session_id, message_id)); CREATE INDEX passes_open_by_session ON passes (session_id, outcome, pass_number DESC); CREATE TABLE lifecycle_receipts (event_id TEXT PRIMARY KEY, aggregate_id TEXT NOT NULL, sequence INTEGER NOT NULL, event_type TEXT NOT NULL, observed_at INTEGER NOT NULL, UNIQUE (aggregate_id, sequence)); CREATE INDEX receipts_by_aggregate ON lifecycle_receipts (aggregate_id, sequence DESC);`;
-const MIGRATION_2 = `CREATE TABLE runs (run_id TEXT PRIMARY KEY, root_session_id TEXT NOT NULL UNIQUE REFERENCES sessions(session_id), bead_id TEXT UNIQUE, project_label TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('open','finalized')), started_at INTEGER NOT NULL, ended_at INTEGER, report_path TEXT); CREATE TABLE run_sessions (run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, source TEXT NOT NULL CHECK(source IN ('root','parent-chain','explicit-primary')), PRIMARY KEY(run_id, session_id)); CREATE INDEX run_sessions_by_session ON run_sessions(session_id); CREATE TABLE reports (report_id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('bead','ad-hoc')), bead_id TEXT UNIQUE, run_id TEXT, selector_json TEXT, generated_at INTEGER NOT NULL, path TEXT NOT NULL);`;
-const MIGRATION_3 =
-  "ALTER TABLE runs ADD COLUMN work_started_at INTEGER; ALTER TABLE runs ADD COLUMN work_ended_at INTEGER;";
-function rowToPass(row: PassRow): PassRecord {
+
+function relativeArtifact(value: string): string {
+  if (
+    value.length === 0 ||
+    value.length > 512 ||
+    value.startsWith("/") ||
+    value.split("/").some((part) => part === ".." || !/^[A-Za-z0-9._-]+$/u.test(part))
+  )
+    throw new Error("report artifact path must be a private relative key");
+  return value;
+}
+
+function timestamp(value: number | undefined, fallback = Date.now()): number {
+  const result = value ?? fallback;
+  if (!Number.isSafeInteger(result) || result < 0)
+    throw new Error("timestamp must be a safe integer");
+  return result;
+}
+
+function rowToSession(row: SessionRow): SessionRecord {
   return {
-    id: row.id,
     sessionID: row.session_id,
-    passNumber: row.pass_number,
-    messageID: row.message_id,
-    observedAgent: row.observed_agent,
-    phaseKey: row.phase_key,
-    phaseLabel: row.phase_label,
-    repeatEligible: row.repeat_eligible === 1,
+    parentSessionID: row.parent_session_id,
+    firstObservedAt: row.first_observed_at,
+    lastObservedAt: row.last_observed_at,
+  };
+}
+
+function rowToAction(row: ActionRow): ActionRecord {
+  return {
+    sessionID: row.session_id,
+    actionID: row.action_id,
+    observedRole: row.observed_role,
     startedAt: row.started_at,
     endedAt: row.ended_at,
     outcome: row.outcome,
+    startReceiptID: row.start_receipt_id,
   };
-}
-function rowToRun(row: RunRow): RunRecord {
-  return {
-    runID: row.run_id,
-    rootSessionID: row.root_session_id,
-    beadID: row.bead_id,
-    projectLabel: row.project_label,
-    status: row.status,
-    startedAt: row.started_at,
-    endedAt: row.ended_at,
-    workStartedAt: row.work_started_at,
-    workEndedAt: row.work_ended_at,
-    reportPath: row.report_path,
-  };
-}
-const PHASE_COLORS = ["#cfe8ff", "#d9f2d9", "#ffe4b5", "#eadcff", "#ffd6e7", "#d8f3f0"];
-function phaseColor(phaseKey: string): string {
-  let hash = 0;
-  for (const character of phaseKey) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  return PHASE_COLORS[hash % PHASE_COLORS.length]!;
 }
 
+function rowToSlice(row: SliceRow): ActivitySliceRecord {
+  return {
+    sliceID: row.slice_id,
+    actionID: row.action_id,
+    sessionID: row.session_id,
+    beadID: row.bead_id,
+    associationSource: row.association_source,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+  };
+}
+
+function readBead(row: Record<string, unknown> | null | undefined): BeadRecord | undefined {
+  if (!row) return undefined;
+  return {
+    beadID: row.bead_id as string,
+    type: row.bead_type as BeadType,
+    parentBeadID: (row.parent_bead_id as string | null) ?? null,
+    validatedAt: row.validated_at as number,
+  };
+}
+
+/**
+ * Private raw-facts store. It intentionally has no report classifier, Hub client, or run ID.
+ * Associations are stored as immutable receipts plus the current session snapshot so later
+ * policy/reporting work can derive slices without retaining host payloads.
+ */
 export class TrackerStore {
   private constructor(
     private readonly db: Database,
     readonly options: TrackerOptions,
   ) {}
+
   static open(options: TrackerOptions): TrackerStore {
     mkdirSync(options.dataDir, { recursive: true, mode: 0o700 });
-    try {
-      chmodSync(options.dataDir, 0o700);
-    } catch {
-      /* best effort */
-    }
-    const databasePath = join(options.dataDir, "tracker.sqlite");
+    protect(options.dataDir, 0o700);
+    const databasePath = join(options.dataDir, DATABASE_FILENAME);
     const db = new Database(databasePath);
     try {
-      try {
-        chmodSync(databasePath, 0o600);
-      } catch {
-        /* best effort */
-      }
+      protect(databasePath, 0o600);
       db.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
-      migrate(db);
-      return new TrackerStore(db, options);
+      const version =
+        db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0;
+      if (version !== 0 && version !== SCHEMA_VERSION)
+        throw new Error("tracker database schema is not supported");
+      if (version === 0) {
+        db.transaction(() => {
+          db.exec(SCHEMA);
+          db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+        })();
+      }
+      const store = new TrackerStore(db, options);
+      protect(databasePath, 0o600);
+      protect(join(options.dataDir, `${DATABASE_FILENAME}-wal`), 0o600);
+      protect(join(options.dataDir, `${DATABASE_FILENAME}-shm`), 0o600);
+      return store;
     } catch (error) {
       db.close();
       throw error;
     }
   }
+
   close(): void {
+    try {
+      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch {
+      // Best effort: the directory remains private even if a checkpoint is unavailable.
+    }
     this.db.close();
   }
-  recordSession(input: SessionInput): void {
-    this.transaction(() => {
-      this.ensureSession(input, input.observedAt ?? Date.now());
-      this.propagateParentAssociation(input);
+
+  recordSession(input: SessionObservation): SessionRecord {
+    const sessionID = nonEmpty(input.sessionID, "sessionID");
+    const parentSessionID = input.parentSessionID
+      ? nonEmpty(input.parentSessionID, "parentSessionID")
+      : undefined;
+    const observedAt = timestamp(input.observedAt);
+    return this.immediate(() => {
+      if (parentSessionID && parentSessionID !== sessionID)
+        this.ensureSession(parentSessionID, undefined, observedAt);
+      const created = this.ensureSession(sessionID, parentSessionID, observedAt);
+      if (created && parentSessionID)
+        this.inheritAttribution(sessionID, parentSessionID, observedAt);
+      if (input.receipt) this.insertLifecycleReceipt(input.receipt, sessionID);
+      return rowToSession(this.sessionRow(sessionID)!);
     });
   }
-  admit(input: AdmitInput): PassRecord {
-    const now = input.startedAt ?? Date.now();
-    const mapping = mappingFor(this.options, input.agent);
-    return this.transaction(() => {
-      this.ensureSession(input, now);
-      this.propagateParentAssociation(input);
-      const next = this.db
-        .query<{ next_number: number }>(
-          "SELECT COALESCE(MAX(pass_number), 0) + 1 AS next_number FROM passes WHERE session_id = ?",
+
+  /** Start one host action; the composite session/action key makes retries no-ops. */
+  startAction(input: ActionStart): ActionRecord {
+    const sessionID = nonEmpty(input.sessionID, "sessionID");
+    const actionID = nonEmpty(input.actionID, "actionID");
+    const startedAt = timestamp(input.startedAt);
+    const observedRole = ROLES.has(input.observedRole ?? "") ? input.observedRole! : "unknown";
+    return this.immediate(() => {
+      this.ensureSession(sessionID, undefined, startedAt);
+      const existing = this.actionRow(sessionID, actionID);
+      if (existing) return rowToAction(existing);
+      if (input.receiptID) {
+        if (
+          !this.insertLifecycleReceipt(
+            {
+              eventID: input.receiptID,
+              aggregateID: actionID,
+              sequence: 0,
+              eventType: "action.started",
+              observedAt: startedAt,
+            },
+            sessionID,
+            actionID,
+          )
         )
-        .get(input.sessionID)!.next_number;
+          throw new Error("action start receipt already belongs to another observation");
+      }
       this.db
         .query(
-          "INSERT INTO passes (session_id, pass_number, message_id, observed_agent, phase_key, phase_label, repeat_eligible, started_at, outcome) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open') ON CONFLICT (session_id, message_id) DO NOTHING",
+          "INSERT INTO actions (session_id, action_id, observed_role, started_at, outcome, start_receipt_id, end_receipt_id) VALUES (?, ?, ?, ?, 'open', ?, NULL)",
+        )
+        .run(sessionID, actionID, observedRole, startedAt, input.receiptID ?? null);
+      const attribution = this.db
+        .query<{ bead_id: string; source: AssociationSource }>(
+          "SELECT bead_id, source FROM session_attributions WHERE session_id = ?",
+        )
+        .get(sessionID);
+      this.db
+        .query(
+          "INSERT INTO activity_slices (action_id, session_id, bead_id, association_source, started_at) VALUES (?, ?, ?, ?, ?)",
         )
         .run(
-          input.sessionID,
-          next,
-          input.messageID,
-          input.agent ?? null,
-          mapping.phaseKey,
-          mapping.phaseLabel,
-          mapping.repeatEligible ? 1 : 0,
-          now,
+          actionID,
+          sessionID,
+          attribution?.bead_id ?? null,
+          attribution?.source ?? null,
+          startedAt,
         );
-      return rowToPass(
-        this.db
-          .query<PassRow>("SELECT * FROM passes WHERE session_id = ? AND message_id = ?")
-          .get(input.sessionID, input.messageID)!,
-      );
+      return rowToAction(this.actionRow(sessionID, actionID)!);
     });
   }
-  closeExecution(input: ExecutionInput): boolean {
-    return this.transactionImmediate(() => {
-      const latest = this.db
-        .query<{ sequence: number }>(
-          "SELECT sequence FROM lifecycle_receipts WHERE aggregate_id = ? ORDER BY sequence DESC LIMIT 1",
+
+  /** End one action and its current slice in the same transaction as the host receipt. */
+  endAction(input: ActionEnd): boolean {
+    nonEmpty(input.eventID, "eventID");
+    nonEmpty(input.aggregateID, "aggregateID");
+    nonEmpty(input.sessionID, "sessionID");
+    if (!Number.isSafeInteger(input.sequence) || input.sequence < 0)
+      throw new Error("sequence must be a safe integer");
+    const endedAt = timestamp(input.endedAt);
+    return this.immediate(() => {
+      const action = input.actionID
+        ? this.actionRow(input.sessionID, input.actionID)
+        : this.db
+            .query<ActionRow>(
+              "SELECT * FROM actions WHERE session_id = ? AND outcome = 'open' ORDER BY started_at DESC LIMIT 1",
+            )
+            .get(input.sessionID);
+      if (!action || action.outcome !== "open") return false;
+      if (
+        !this.insertLifecycleReceipt(
+          { ...input, eventType: "action.ended", observedAt: endedAt },
+          action.session_id,
+          action.action_id,
         )
-        .get(input.aggregateID);
-      if (latest && input.sequence <= latest.sequence) return false;
-      const receipt = this.db
-        .query(
-          "INSERT OR IGNORE INTO lifecycle_receipts (event_id, aggregate_id, sequence, event_type, observed_at) VALUES (?, ?, ?, ?, ?)",
-        )
-        .run(
-          input.eventID,
-          input.aggregateID,
-          input.sequence,
-          `session.execution.${input.outcome}`,
-          input.endedAt,
-        );
-      if (receipt.changes !== 1) return false;
-      if (input.session) this.ensureSession(input.session, input.endedAt);
-      const pass = this.db
-        .query<{ id: number }>(
-          "SELECT id FROM passes WHERE session_id = ? AND outcome = 'open' AND started_at <= ? ORDER BY pass_number DESC LIMIT 1",
-        )
-        .get(input.sessionID, input.endedAt);
-      if (!pass) return true;
+      )
+        return false;
       this.db
-        .query("UPDATE passes SET outcome = ?, ended_at = ? WHERE id = ? AND outcome = 'open'")
-        .run(input.outcome, input.endedAt, pass.id);
+        .query(
+          "UPDATE actions SET ended_at = ?, outcome = ?, end_receipt_id = ? WHERE session_id = ? AND action_id = ? AND outcome = 'open'",
+        )
+        .run(endedAt, input.outcome, input.eventID, action.session_id, action.action_id);
+      this.db
+        .query(
+          "UPDATE activity_slices SET ended_at = ? WHERE session_id = ? AND action_id = ? AND ended_at IS NULL",
+        )
+        .run(endedAt, action.session_id, action.action_id);
       return true;
     });
   }
-  recoverOpenPasses(): number {
-    return this.db
-      .query("UPDATE passes SET outcome = 'incomplete', ended_at = NULL WHERE outcome = 'open'")
-      .run().changes;
-  }
-  listPasses(sessionID?: string): PassRecord[] {
-    const rows =
-      sessionID === undefined
-        ? this.db.query<PassRow>("SELECT * FROM passes ORDER BY id").all()
-        : this.db
-            .query<PassRow>("SELECT * FROM passes WHERE session_id = ? ORDER BY id")
-            .all(sessionID);
-    return rows.map(rowToPass);
-  }
-  listSessions(): Array<Record<string, unknown>> {
-    return this.db.query("SELECT * FROM sessions ORDER BY session_id").all();
-  }
-  listReceipts(): Array<Record<string, unknown>> {
-    return this.db.query("SELECT * FROM lifecycle_receipts ORDER BY event_id").all();
-  }
-  startRun(input: { beadID: string; root: SessionInput; startedAt?: number }): RunRecord {
-    const beadID = validateBeadID(input.beadID);
-    const startedAt = input.startedAt ?? Date.now();
-    return this.transactionImmediate(() => {
-      this.ensureSession(input.root, startedAt);
-      const byRoot = this.db
-        .query<RunRow>("SELECT * FROM runs WHERE root_session_id = ?")
-        .get(input.root.sessionID);
-      const byBead = this.db.query<RunRow>("SELECT * FROM runs WHERE bead_id = ?").get(beadID);
-      if (byRoot && byRoot.bead_id !== beadID)
-        throw new Error("root session is already assigned to another run");
-      if (byBead && byBead.root_session_id !== input.root.sessionID)
-        throw new Error("bead already has a different root run");
-      const row = byRoot ?? byBead;
-      if (row) {
-        this.addAssociation(row.run_id, input.root.sessionID, "root");
-        this.associateDescendants(row.run_id, input.root.sessionID);
-        return rowToRun(row);
-      }
-      const runID = randomUUID();
-      this.db
-        .query(
-          "INSERT INTO runs (run_id, root_session_id, bead_id, project_label, status, started_at) VALUES (?, ?, ?, ?, 'open', ?)",
-        )
-        .run(runID, input.root.sessionID, beadID, input.root.projectLabel, startedAt);
-      this.addAssociation(runID, input.root.sessionID, "root");
-      this.associateDescendants(runID, input.root.sessionID);
-      return rowToRun(this.db.query<RunRow>("SELECT * FROM runs WHERE run_id = ?").get(runID)!);
-    });
-  }
-  getRun(runID: string): RunRecord | undefined {
-    const row = this.db.query<RunRow>("SELECT * FROM runs WHERE run_id = ?").get(runID);
-    return row ? rowToRun(row) : undefined;
-  }
-  findRunByBead(beadID: string): RunRecord | undefined {
-    const row = this.db
-      .query<RunRow>("SELECT * FROM runs WHERE bead_id = ?")
-      .get(validateBeadID(beadID));
-    return row ? rowToRun(row) : undefined;
-  }
-  findRunForSession(sessionID: string): RunRecord | undefined {
-    const row = this.db
-      .query<RunRow>(
-        "SELECT runs.* FROM runs JOIN run_sessions ON run_sessions.run_id = runs.run_id WHERE run_sessions.session_id = ? ORDER BY runs.status = 'open' DESC, runs.started_at DESC LIMIT 1",
-      )
-      .get(sessionID);
-    return row ? rowToRun(row) : undefined;
-  }
-  listRunSessions(runID: string): Array<{ sessionID: string; source: AssociationSource }> {
-    return this.db
-      .query<{ session_id: string; source: AssociationSource }>(
-        "SELECT session_id, source FROM run_sessions WHERE run_id = ? ORDER BY session_id",
-      )
-      .all(runID)
-      .map((row) => ({ sessionID: row.session_id, source: row.source }));
-  }
-  attachLane(input: { runID: string; session: SessionInput }): void {
-    this.transactionImmediate(() => {
-      const run = this.db.query<RunRow>("SELECT * FROM runs WHERE run_id = ?").get(input.runID);
-      if (!run) throw new Error("run not found");
-      if (run.status === "finalized") throw new Error("run is finalized");
-      this.attachLaneToRun(run, input.session);
-    });
-  }
-  attachPrimaryByBead(input: { beadID: string; session: SessionInput }): void {
-    const beadID = validateBeadID(input.beadID);
-    this.transactionImmediate(() => {
-      const run = this.db
-        .query<RunRow>("SELECT * FROM runs WHERE bead_id = ? AND status = 'open'")
-        .get(beadID);
-      if (!run) throw new Error("open run not found");
-      this.attachLaneToRun(run, input.session);
-    });
-  }
-  finalizeRun(beadID: string, endedAt = Date.now()): RunRecord {
-    return this.transactionImmediate(() => {
-      const run = this.db
-        .query<RunRow>("SELECT * FROM runs WHERE bead_id = ?")
-        .get(validateBeadID(beadID));
-      if (!run) throw new Error("no run exists for bead");
-      if (run.status === "finalized" && run.work_started_at !== null) return rowToRun(run);
-      this.db
-        .query(
-          "UPDATE passes SET outcome = 'incomplete', ended_at = NULL WHERE outcome = 'open' AND session_id IN (SELECT session_id FROM run_sessions WHERE run_id = ?)",
-        )
-        .run(run.run_id);
-      const bounds = this.db
-        .query<{ work_started_at: number | null; work_ended_at: number | null }>(
-          "SELECT MIN(started_at) AS work_started_at, MAX(ended_at) AS work_ended_at FROM passes WHERE session_id IN (SELECT session_id FROM run_sessions WHERE run_id = ?)",
-        )
-        .get(run.run_id)!;
-      this.db
-        .query(
-          "UPDATE runs SET status = 'finalized', ended_at = ?, work_started_at = ?, work_ended_at = ? WHERE run_id = ?",
-        )
-        .run(endedAt, bounds.work_started_at, bounds.work_ended_at, run.run_id);
-      return rowToRun(
-        this.db.query<RunRow>("SELECT * FROM runs WHERE run_id = ?").get(run.run_id)!,
-      );
-    });
-  }
-  recordReport(record: ReportRecord): void {
-    this.transaction(() => {
-      this.db
-        .query(
-          "INSERT INTO reports (report_id, kind, bead_id, generated_at, path) VALUES (?, ?, ?, ?, ?) ON CONFLICT (bead_id) DO UPDATE SET report_id = excluded.report_id, kind = excluded.kind, generated_at = excluded.generated_at, path = excluded.path",
-        )
-        .run(record.reportID, record.kind, record.beadID ?? null, record.generatedAt, record.path);
-      if (record.beadID)
-        this.db
-          .query("UPDATE runs SET report_path = ? WHERE bead_id = ?")
-          .run(record.path, record.beadID);
-    });
-  }
-  listReports(): Array<Record<string, unknown>> {
-    return this.db
-      .query(
-        "SELECT report_id, kind, bead_id, generated_at, path FROM reports ORDER BY generated_at",
-      )
-      .all();
-  }
-  reportData(selector: ReportSelector, now = Date.now()): ReportData {
-    const sessions = this.db
-      .query<SessionRow>(
-        "SELECT session_id, parent_id, project_label FROM sessions ORDER BY session_id",
-      )
-      .all();
-    const known = new Set(sessions.map((item) => item.session_id));
-    if (selector.sessions?.some((id) => !known.has(id)))
-      throw new Error("unknown session in report selector");
-    let allowed = selector.sessions ? new Set(selector.sessions) : undefined;
-    let run: RunRow | undefined;
-    if (selector.bead) {
-      run =
-        this.db
-          .query<RunRow>("SELECT * FROM runs WHERE bead_id = ?")
-          .get(validateBeadID(selector.bead)) ?? undefined;
-      if (!run) throw new Error("no run exists for bead");
-      const associated = this.db
-        .query<{ session_id: string }>("SELECT session_id FROM run_sessions WHERE run_id = ?")
-        .all(run.run_id);
-      const beadSessions = new Set(associated.map((item) => item.session_id));
-      allowed = allowed ? new Set([...allowed].filter((id) => beadSessions.has(id))) : beadSessions;
+
+  /**
+   * Recover only host-identified actions explicitly proven stale by the caller's lifecycle facts.
+   * Actions without a recorded start receipt are never recovered by this safety boundary.
+   */
+  recoverStaleActions(
+    actions: readonly Readonly<{ sessionID: string; actionID: string }>[] = [],
+    receipt?: Readonly<LifecycleReceipt & { eventType: "session.deleted" }>,
+  ): number {
+    const identities = actions.map((action) => ({
+      sessionID: nonEmpty(action.sessionID, "sessionID"),
+      actionID: nonEmpty(action.actionID, "actionID"),
+    }));
+    if (receipt) {
+      nonEmpty(receipt.eventID, "eventID");
+      nonEmpty(receipt.aggregateID, "aggregateID");
+      if (!Number.isSafeInteger(receipt.sequence) || receipt.sequence < 0)
+        throw new Error("sequence must be a safe integer");
+      timestamp(receipt.observedAt);
     }
-    const selected = this.listPasses().filter(
-      (pass) =>
-        (!allowed || allowed.has(pass.sessionID)) &&
-        (selector.from === undefined || (pass.endedAt ?? now) >= selector.from) &&
-        (selector.to === undefined || pass.startedAt <= selector.to),
-    );
-    const projectLabel =
-      run?.project_label ??
-      sessions.find((item) => selected.some((pass) => pass.sessionID === item.session_id))
-        ?.project_label ??
-      "selected sessions";
-    const phases = new Map<
-      string,
-      { label: string; agents: Set<string>; passes: number; activeMs: number; color: string }
-    >();
-    const lanes = new Map<
-      string,
-      { passes: number; activeMs: number; outcomes: Set<string>; segments: ReportPass[] }
-    >();
-    const observedAgents = new Map<string, { passes: number; activeMs: number }>();
-    const outcomes: Record<string, number> = {};
-    const repeats = new Map<
-      string,
-      { agent: string; sessionID: string; phaseLabel: string; passes: number; repeated: boolean }
-    >();
-    const warnings: string[] = [];
-    const passStart = selected.length ? Math.min(...selected.map((pass) => pass.startedAt)) : now;
-    const endedPasses = selected.filter((pass) => pass.endedAt !== null);
-    const passEnd = !selected.length
-      ? passStart
-      : run?.status === "finalized"
-        ? endedPasses.length
-          ? Math.max(...endedPasses.map((pass) => pass.endedAt!))
-          : passStart
-        : Math.max(...selected.map((pass) => pass.endedAt ?? now));
-    const timelineEnd = selected.length
-      ? Math.max(passEnd, ...selected.map((pass) => pass.startedAt))
-      : passEnd;
-    const scaleRange = Math.max(1, timelineEnd - passStart);
-    const passes: ReportPass[] = selected.map((pass) => {
-      const activeMs = pass.endedAt === null ? 0 : Math.max(0, pass.endedAt - pass.startedAt);
-      const agent = pass.observedAgent ?? "unmapped";
-      const visualEnd = pass.endedAt ?? (run?.status === "finalized" ? pass.startedAt : now);
-      const leftPercent = Math.max(
-        0,
-        Math.min(100, ((pass.startedAt - passStart) / scaleRange) * 100),
-      );
-      const endPercent = Math.max(
-        leftPercent,
-        Math.min(100, ((visualEnd - passStart) / scaleRange) * 100),
-      );
-      const result: ReportPass = {
-        sessionID: pass.sessionID,
-        observedAgent: agent,
-        phaseKey: pass.phaseKey,
-        phaseLabel: pass.phaseLabel,
-        phaseColor: phaseColor(pass.phaseKey),
-        passNumber: pass.passNumber,
-        startedAt: pass.startedAt,
-        endedAt: pass.endedAt,
-        durationMs: activeMs,
-        leftPercent,
-        widthPercent: endPercent - leftPercent,
-        outcome: pass.outcome,
-      };
-      const phase = phases.get(pass.phaseKey) ?? {
-        label: pass.phaseLabel,
-        agents: new Set<string>(),
-        passes: 0,
-        activeMs: 0,
-        color: result.phaseColor,
-      };
-      phase.agents.add(agent);
-      phase.passes++;
-      phase.activeMs += activeMs;
-      phases.set(pass.phaseKey, phase);
-      const lane = lanes.get(pass.sessionID) ?? {
-        passes: 0,
-        activeMs: 0,
-        outcomes: new Set<string>(),
-        segments: [],
-      };
-      lane.passes++;
-      lane.activeMs += activeMs;
-      lane.outcomes.add(pass.outcome);
-      lane.segments.push(result);
-      lanes.set(pass.sessionID, lane);
-      const agentTotal = observedAgents.get(agent) ?? { passes: 0, activeMs: 0 };
-      agentTotal.passes++;
-      agentTotal.activeMs += activeMs;
-      observedAgents.set(agent, agentTotal);
-      outcomes[pass.outcome] = (outcomes[pass.outcome] ?? 0) + 1;
-      if (pass.outcome === "incomplete") warnings.push(`incomplete pass in ${pass.sessionID}`);
-      if (pass.phaseKey === "unmapped") warnings.push(`unmapped agent in ${pass.sessionID}`);
-      if (pass.repeatEligible) {
-        const key = `${agent}\u0000${pass.sessionID}`;
-        const repeat = repeats.get(key) ?? {
-          agent,
-          sessionID: pass.sessionID,
-          phaseLabel: pass.phaseLabel,
-          passes: 0,
-          repeated: false,
-        };
-        repeat.passes++;
-        repeat.repeated = repeat.passes > 1;
-        repeats.set(key, repeat);
+    if (identities.length === 0 && !receipt) return 0;
+    return this.immediate(() => {
+      if (receipt && !this.insertLifecycleReceipt(receipt, receipt.aggregateID)) return 0;
+      let changes = 0;
+      for (const identity of identities) {
+        changes += this.db
+          .query(
+            "UPDATE actions SET outcome = 'incomplete', ended_at = NULL WHERE session_id = ? AND action_id = ? AND outcome = 'open' AND start_receipt_id IS NOT NULL",
+          )
+          .run(identity.sessionID, identity.actionID).changes;
       }
-      return result;
+      return changes;
     });
-    return {
-      beadID: run?.bead_id ?? undefined,
-      projectLabel,
-      status: run?.status ?? "open",
-      selection: selector,
-      generatedAt: now,
-      finalizedAt: run?.ended_at ?? null,
-      timeScale: { start: passStart, end: timelineEnd },
-      summary: {
-        elapsedMs: Math.max(0, passEnd - passStart),
-        activeMs: passes.reduce((sum, pass) => sum + pass.durationMs, 0),
-        passes: passes.length,
-      },
-      phases: [...phases.values()].map((phase) => ({
-        label: phase.label,
-        agents: [...phase.agents],
-        passes: phase.passes,
-        activeMs: phase.activeMs,
-        color: phase.color,
-      })),
-      observedAgents: [...observedAgents.entries()].map(([agent, value]) => ({ agent, ...value })),
-      lanes: [...lanes.entries()].map(([sessionID, lane]) => ({
-        sessionID,
-        passes: lane.passes,
-        activeMs: lane.activeMs,
-        outcomes: [...lane.outcomes],
-        segments: lane.segments,
-      })),
-      passes,
-      outcomes,
-      repeats: [...repeats.values()],
-      warnings: [...new Set(warnings)],
-    };
   }
-  private ensureSession(input: SessionInput, observedAt: number): void {
-    if (input.parentID && input.parentID !== input.sessionID)
+
+  recordTopology(input: TopologyRecord): BeadRecord {
+    const beadID = validateBeadID(input.beadID);
+    if (!BEAD_TYPES.has(input.type)) throw new Error("unsupported bead type");
+    const parentBeadID =
+      input.parentBeadID === undefined ? null : validateBeadID(input.parentBeadID);
+    if (parentBeadID && (input.type === "epic" || parentBeadID === beadID))
+      throw new Error("invalid bead topology");
+    const validatedAt = timestamp(input.validatedAt);
+    return this.immediate(() => {
+      if (parentBeadID) {
+        const parent = readBead(
+          this.db.query("SELECT * FROM beads WHERE bead_id = ?").get(parentBeadID),
+        );
+        if (!parent || parent.type !== "epic") throw new Error("parent topology is not validated");
+      }
+      const existing = readBead(this.db.query("SELECT * FROM beads WHERE bead_id = ?").get(beadID));
+      if (existing) {
+        if (existing.type !== input.type || existing.parentBeadID !== parentBeadID)
+          throw new Error("bead topology conflicts with immutable record");
+        return existing;
+      }
       this.db
         .query(
-          "INSERT INTO sessions (session_id, project_id, workspace_id, project_label, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (session_id) DO NOTHING",
+          "INSERT INTO beads (bead_id, bead_type, parent_bead_id, validated_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(beadID, input.type, parentBeadID, validatedAt);
+      return readBead(this.db.query("SELECT * FROM beads WHERE bead_id = ?").get(beadID))!;
+    });
+  }
+
+  /** Record a validated association and split all currently open actions at its receipt boundary. */
+  recordAssociation(input: AssociationRecord): boolean {
+    const receiptID = nonEmpty(input.receiptID, "receiptID");
+    const sessionID = nonEmpty(input.sessionID, "sessionID");
+    const beadID = validateBeadID(input.beadID);
+    if (!ASSOCIATION_SOURCES.has(input.source)) throw new Error("unsupported association source");
+    const observedAt = timestamp(input.observedAt);
+    return this.immediate(() => {
+      if (!this.sessionRow(sessionID)) throw new Error("session is not observed");
+      const bead = readBead(this.db.query("SELECT * FROM beads WHERE bead_id = ?").get(beadID));
+      if (!bead) throw new Error("bead topology is not validated");
+      if (
+        this.db.query("SELECT 1 FROM closeouts WHERE bead_id = ?").get(beadID) &&
+        bead.type !== "epic"
+      )
+        throw new Error("concrete bead is closed");
+      if (
+        input.source === "launch-descriptor" &&
+        this.db.query("SELECT 1 FROM actions WHERE session_id = ? LIMIT 1").get(sessionID)
+      )
+        return false;
+      const receipt = this.db
+        .query(
+          "INSERT OR IGNORE INTO association_receipts (receipt_id, session_id, bead_id, source, observed_at, source_receipt_id) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run(receiptID, sessionID, beadID, input.source, observedAt, input.sourceReceiptID ?? null);
+      if (receipt.changes !== 1) return false;
+      const current = this.db
+        .query<{ bead_id: string; source: AssociationSource; changed_at: number }>(
+          "SELECT bead_id, source, changed_at FROM session_attributions WHERE session_id = ?",
+        )
+        .get(sessionID);
+      if (current?.bead_id === beadID) return false;
+      const actions = this.db
+        .query<ActionRow>("SELECT * FROM actions WHERE session_id = ? AND outcome = 'open'")
+        .all(sessionID);
+
+      if (input.source === "creation") {
+        // Creation is the one approved exception to forward-only attribution:
+        // only this root's preceding unassigned slices become scoping.
+        this.db
+          .query(
+            "UPDATE activity_slices SET bead_id = ?, association_source = ? WHERE session_id = ? AND bead_id IS NULL AND started_at <= ?",
+          )
+          .run(beadID, input.source, sessionID, observedAt);
+      }
+      for (const action of actions) {
+        const currentSlice = this.db
+          .query<{ bead_id: string | null; started_at: number }>(
+            "SELECT bead_id, started_at FROM activity_slices WHERE session_id = ? AND action_id = ? AND ended_at IS NULL ORDER BY slice_id DESC LIMIT 1",
+          )
+          .get(sessionID, action.action_id);
+        if (
+          input.source === "creation" &&
+          currentSlice?.bead_id === beadID &&
+          currentSlice.started_at <= observedAt
+        )
+          continue;
+        const boundary = Math.max(observedAt, action.started_at, current?.changed_at ?? 0);
+        this.db
+          .query(
+            "UPDATE activity_slices SET ended_at = ? WHERE session_id = ? AND action_id = ? AND ended_at IS NULL",
+          )
+          .run(boundary, sessionID, action.action_id);
+        this.db
+          .query(
+            "INSERT INTO activity_slices (action_id, session_id, bead_id, association_source, started_at) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(action.action_id, sessionID, beadID, input.source, boundary);
+      }
+      this.db
+        .query(
+          "INSERT INTO session_attributions (session_id, bead_id, source, changed_at) VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET bead_id = excluded.bead_id, source = excluded.source, changed_at = MAX(session_attributions.changed_at, excluded.changed_at)",
+        )
+        .run(sessionID, beadID, input.source, observedAt);
+      return true;
+    });
+  }
+
+  recordCloseout(input: CloseoutRecord): CloseoutRecordView {
+    const receiptID = nonEmpty(input.receiptID, "receiptID");
+    const beadID = validateBeadID(input.beadID);
+    const closedAt = timestamp(input.closedAt);
+    return this.immediate(() => {
+      const bead = readBead(this.db.query("SELECT * FROM beads WHERE bead_id = ?").get(beadID));
+      if (!bead) throw new Error("bead topology is not validated");
+      const existing = this.db
+        .query<{
+          receipt_id: string;
+          bead_id: string;
+          closeout_kind: "epic" | "concrete";
+          closed_at: number;
+        }>("SELECT * FROM closeouts WHERE bead_id = ?")
+        .get(beadID);
+      if (existing)
+        return {
+          receiptID: existing.receipt_id,
+          beadID: existing.bead_id,
+          kind: existing.closeout_kind,
+          closedAt: existing.closed_at,
+        };
+      const kind = bead.type === "epic" ? "epic" : "concrete";
+      this.db
+        .query(
+          "INSERT INTO closeouts (bead_id, receipt_id, closeout_kind, closed_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(beadID, receiptID, kind, closedAt);
+      if (input.sessionID && kind === "concrete") {
+        const sessionID = nonEmpty(input.sessionID, "sessionID");
+        const current = this.db
+          .query<{ bead_id: string }>(
+            "SELECT bead_id FROM session_attributions WHERE session_id = ?",
+          )
+          .get(sessionID);
+        if (current?.bead_id === beadID) {
+          const actions = this.db
+            .query<ActionRow>("SELECT * FROM actions WHERE session_id = ? AND outcome = 'open'")
+            .all(sessionID);
+          for (const action of actions) {
+            const boundary = Math.max(closedAt, action.started_at);
+            this.db
+              .query(
+                "UPDATE activity_slices SET ended_at = ? WHERE session_id = ? AND action_id = ? AND ended_at IS NULL",
+              )
+              .run(boundary, sessionID, action.action_id);
+            this.db
+              .query(
+                "INSERT INTO activity_slices (action_id, session_id, bead_id, association_source, started_at) VALUES (?, ?, NULL, NULL, ?)",
+              )
+              .run(action.action_id, sessionID, boundary);
+          }
+          this.db.query("DELETE FROM session_attributions WHERE session_id = ?").run(sessionID);
+        }
+      }
+      return { receiptID, beadID, kind, closedAt };
+    });
+  }
+
+  recordReport(input: ReportMetadata): ReportMetadataRecord {
+    const reportID = nonEmpty(input.reportID, "reportID");
+    const artifactPath = relativeArtifact(input.artifactPath);
+    const selectorFingerprint = nonEmpty(input.selectorFingerprint, "selectorFingerprint");
+    const policyVersion = nonEmpty(input.policyVersion, "policyVersion");
+    if (!Number.isSafeInteger(input.sourceHighWaterMark) || input.sourceHighWaterMark < 0)
+      throw new Error("source high-water mark must be a safe integer");
+    const generatedAt = timestamp(input.generatedAt);
+    return this.immediate(() => {
+      this.db
+        .query(
+          "INSERT INTO reports (report_id, artifact_path, selector_fingerprint, policy_version, source_high_water_mark, generated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(report_id) DO UPDATE SET artifact_path = excluded.artifact_path, selector_fingerprint = excluded.selector_fingerprint, policy_version = excluded.policy_version, source_high_water_mark = excluded.source_high_water_mark, generated_at = excluded.generated_at",
         )
         .run(
-          input.parentID,
-          input.projectID,
-          input.workspaceID ?? null,
-          input.projectLabel,
-          observedAt,
-          observedAt,
+          reportID,
+          artifactPath,
+          selectorFingerprint,
+          policyVersion,
+          input.sourceHighWaterMark,
+          generatedAt,
         );
+      return {
+        reportID,
+        artifactPath,
+        selectorFingerprint,
+        policyVersion,
+        sourceHighWaterMark: input.sourceHighWaterMark,
+        generatedAt,
+      };
+    });
+  }
+
+  /**
+   * Prune expired unassigned slices, including recovered incomplete actions.
+   * Incomplete actions age from their start and keep a NULL end timestamp.
+   * The bounded transaction leaves associated slices in mixed sessions untouched.
+   */
+  cleanupUnassigned(
+    now = Date.now(),
+    limit = RETENTION_CLEANUP_BATCH_SIZE,
+  ): RetentionCleanupResult {
+    const cutoff = timestamp(now) - UNASSIGNED_RETENTION_MS;
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new Error("cleanup limit must be positive");
+    return this.immediate(() => {
+      const slices = this.db
+        .query<{ slice_id: number }>(
+          "SELECT slice_id FROM activity_slices WHERE bead_id IS NULL AND ( (ended_at IS NOT NULL AND ended_at < ?) OR (ended_at IS NULL AND EXISTS (SELECT 1 FROM actions WHERE actions.session_id = activity_slices.session_id AND actions.action_id = activity_slices.action_id AND actions.outcome = 'incomplete' AND actions.started_at < ?)) ) ORDER BY slice_id LIMIT ?",
+        )
+        .all(cutoff, cutoff, limit);
+      for (const slice of slices)
+        this.db.query("DELETE FROM activity_slices WHERE slice_id = ?").run(slice.slice_id);
+
+      const emptyActions = this.db
+        .query<{
+          session_id: string;
+          action_id: string;
+          start_receipt_id: string | null;
+          end_receipt_id: string | null;
+        }>(
+          "SELECT session_id, action_id, start_receipt_id, end_receipt_id FROM actions WHERE started_at < ? AND (ended_at IS NOT NULL OR outcome = 'incomplete') AND NOT EXISTS (SELECT 1 FROM activity_slices WHERE activity_slices.session_id = actions.session_id AND activity_slices.action_id = actions.action_id) LIMIT ?",
+        )
+        .all(cutoff, limit);
+      for (const action of emptyActions) {
+        for (const receiptID of [action.start_receipt_id, action.end_receipt_id])
+          if (receiptID)
+            this.db.query("DELETE FROM lifecycle_receipts WHERE event_id = ?").run(receiptID);
+        this.db
+          .query("DELETE FROM actions WHERE session_id = ? AND action_id = ?")
+          .run(action.session_id, action.action_id);
+      }
+
+      const emptySessions = this.db
+        .query<{ session_id: string }>(
+          "SELECT session_id FROM sessions WHERE last_observed_at < ? AND NOT EXISTS (SELECT 1 FROM actions WHERE actions.session_id = sessions.session_id) AND NOT EXISTS (SELECT 1 FROM session_attributions WHERE session_attributions.session_id = sessions.session_id) LIMIT ?",
+        )
+        .all(cutoff, limit);
+      for (const session of emptySessions) {
+        this.db
+          .query("DELETE FROM lifecycle_receipts WHERE aggregate_id = ?")
+          .run(session.session_id);
+        this.db.query("DELETE FROM sessions WHERE session_id = ?").run(session.session_id);
+      }
+      return { slicesPruned: slices.length, sessionsPruned: emptySessions.length };
+    });
+  }
+
+  listSessions(): SessionRecord[] {
+    return this.db
+      .query<SessionRow>("SELECT * FROM sessions ORDER BY session_id")
+      .all()
+      .map(rowToSession);
+  }
+  listActions(): ActionRecord[] {
+    return this.db
+      .query<ActionRow>("SELECT * FROM actions ORDER BY session_id, started_at, action_id")
+      .all()
+      .map(rowToAction);
+  }
+  listActivitySlices(): ActivitySliceRecord[] {
+    return this.db
+      .query<SliceRow>("SELECT * FROM activity_slices ORDER BY slice_id")
+      .all()
+      .map(rowToSlice);
+  }
+  listBeads(): BeadRecord[] {
+    return this.db
+      .query("SELECT * FROM beads ORDER BY bead_id")
+      .all()
+      .map((row) => readBead(row)!)
+      .filter(Boolean);
+  }
+  listAssociationReceipts(): AssociationReceiptRecord[] {
+    return this.db
+      .query<{
+        receipt_id: string;
+        session_id: string;
+        bead_id: string;
+        source: AssociationSource;
+        observed_at: number;
+        source_receipt_id: string | null;
+      }>("SELECT * FROM association_receipts ORDER BY observed_at, receipt_id")
+      .all()
+      .map((row) => ({
+        receiptID: row.receipt_id,
+        sessionID: row.session_id,
+        beadID: row.bead_id,
+        source: row.source,
+        observedAt: row.observed_at,
+        sourceReceiptID: row.source_receipt_id,
+      }));
+  }
+  listLifecycleReceipts(): LifecycleReceiptRecord[] {
+    return this.db
+      .query<{
+        event_id: string;
+        aggregate_id: string;
+        sequence: number;
+        event_type: string;
+        observed_at: number;
+      }>("SELECT * FROM lifecycle_receipts ORDER BY event_id")
+      .all()
+      .map((row) => ({
+        eventID: row.event_id,
+        aggregateID: row.aggregate_id,
+        sequence: row.sequence,
+        eventType: row.event_type,
+        observedAt: row.observed_at,
+      }));
+  }
+  listCloseouts(): CloseoutRecordView[] {
+    return this.db
+      .query<{
+        receipt_id: string;
+        bead_id: string;
+        closeout_kind: "epic" | "concrete";
+        closed_at: number;
+      }>("SELECT * FROM closeouts ORDER BY bead_id")
+      .all()
+      .map((row) => ({
+        receiptID: row.receipt_id,
+        beadID: row.bead_id,
+        kind: row.closeout_kind,
+        closedAt: row.closed_at,
+      }));
+  }
+  listReports(): ReportMetadataRecord[] {
+    return this.db
+      .query<{
+        report_id: string;
+        artifact_path: string;
+        selector_fingerprint: string;
+        policy_version: string;
+        source_high_water_mark: number;
+        generated_at: number;
+      }>("SELECT * FROM reports ORDER BY report_id")
+      .all()
+      .map((row) => ({
+        reportID: row.report_id,
+        artifactPath: row.artifact_path,
+        selectorFingerprint: row.selector_fingerprint,
+        policyVersion: row.policy_version,
+        sourceHighWaterMark: row.source_high_water_mark,
+        generatedAt: row.generated_at,
+      }));
+  }
+
+  readReportSnapshot(): ReportSnapshot {
+    return this.db.transaction(() => {
+      const sessions = this.listSessions();
+      const actions = this.listActions();
+      const slices = this.listActivitySlices();
+      const beads = this.listBeads();
+      const associations = this.listAssociationReceipts();
+      const closeouts = this.listCloseouts();
+      const timestamps = [
+        ...sessions.map((record) => record.lastObservedAt),
+        ...actions.flatMap((record) =>
+          record.endedAt === null ? [record.startedAt] : [record.startedAt, record.endedAt],
+        ),
+        ...slices.flatMap((record) =>
+          record.endedAt === null ? [record.startedAt] : [record.startedAt, record.endedAt],
+        ),
+        ...beads.map((record) => record.validatedAt),
+        ...associations.map((record) => record.observedAt),
+        ...this.listLifecycleReceipts().map((record) => record.observedAt),
+        ...closeouts.map((record) => record.closedAt),
+      ];
+      return {
+        sessions,
+        actions,
+        slices,
+        beads,
+        associations,
+        closeouts,
+        sourceHighWaterMark: timestamps.length === 0 ? 0 : Math.max(...timestamps),
+      };
+    })();
+  }
+
+  /** Latest timestamp in raw local facts used by deterministic regeneration. */
+  sourceHighWaterMark(): number {
+    return this.readReportSnapshot().sourceHighWaterMark;
+  }
+
+  private sessionRow(sessionID: string): SessionRow | undefined {
+    return (
+      this.db.query<SessionRow>("SELECT * FROM sessions WHERE session_id = ?").get(sessionID) ??
+      undefined
+    );
+  }
+  private actionRow(sessionID: string, actionID: string): ActionRow | undefined {
+    return (
+      this.db
+        .query<ActionRow>("SELECT * FROM actions WHERE session_id = ? AND action_id = ?")
+        .get(sessionID, actionID) ?? undefined
+    );
+  }
+  private ensureSession(
+    sessionID: string,
+    parentSessionID: string | undefined,
+    observedAt: number,
+  ): boolean {
+    const existing = this.sessionRow(sessionID);
+    if (existing) {
+      this.db
+        .query(
+          "UPDATE sessions SET parent_session_id = COALESCE(parent_session_id, ?), last_observed_at = MAX(last_observed_at, ?) WHERE session_id = ?",
+        )
+        .run(parentSessionID ?? null, observedAt, sessionID);
+      return false;
+    }
     this.db
       .query(
-        "INSERT INTO sessions (session_id, parent_id, project_id, workspace_id, project_label, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (session_id) DO UPDATE SET parent_id = COALESCE(sessions.parent_id, excluded.parent_id), project_id = excluded.project_id, workspace_id = COALESCE(excluded.workspace_id, sessions.workspace_id), project_label = excluded.project_label, last_seen = excluded.last_seen",
+        "INSERT INTO sessions (session_id, parent_session_id, first_observed_at, last_observed_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(sessionID, parentSessionID ?? null, observedAt, observedAt);
+    return true;
+  }
+  private inheritAttribution(sessionID: string, parentSessionID: string, observedAt: number): void {
+    const parent = this.db
+      .query<{ bead_id: string; source: AssociationSource }>(
+        "SELECT bead_id, source FROM session_attributions WHERE session_id = ?",
+      )
+      .get(parentSessionID);
+    if (!parent) return;
+    const parentReceipt = this.db
+      .query<{ receipt_id: string }>(
+        "SELECT receipt_id FROM association_receipts WHERE session_id = ? AND bead_id = ? ORDER BY observed_at DESC, receipt_id DESC LIMIT 1",
+      )
+      .get(parentSessionID, parent.bead_id);
+    const receiptID = `inherit:${sessionID}`;
+    this.db
+      .query(
+        "INSERT OR IGNORE INTO association_receipts (receipt_id, session_id, bead_id, source, observed_at, source_receipt_id) VALUES (?, ?, ?, 'inherited-lane', ?, ?)",
+      )
+      .run(receiptID, sessionID, parent.bead_id, observedAt, parentReceipt?.receipt_id ?? null);
+    this.db
+      .query(
+        "INSERT OR IGNORE INTO session_attributions (session_id, bead_id, source, changed_at) VALUES (?, ?, 'inherited-lane', ?)",
+      )
+      .run(sessionID, parent.bead_id, observedAt);
+  }
+  private insertLifecycleReceipt(
+    input: LifecycleReceipt,
+    sessionID?: string,
+    actionID?: string,
+  ): boolean {
+    const result = this.db
+      .query(
+        "INSERT OR IGNORE INTO lifecycle_receipts (event_id, aggregate_id, sequence, event_type, observed_at, session_id, action_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
-        input.sessionID,
-        input.parentID && input.parentID !== input.sessionID ? input.parentID : null,
-        input.projectID,
-        input.workspaceID ?? null,
-        input.projectLabel,
-        observedAt,
-        observedAt,
+        input.eventID,
+        input.aggregateID,
+        input.sequence,
+        input.eventType,
+        timestamp(input.observedAt),
+        sessionID ?? null,
+        actionID ?? null,
       );
+    return result.changes === 1;
   }
-  private propagateParentAssociation(input: SessionInput): void {
-    if (!input.parentID) return;
-    const runs = this.db
-      .query<{ run_id: string }>("SELECT run_id FROM run_sessions WHERE session_id = ?")
-      .all(input.parentID);
-    for (const run of runs) {
-      this.addAssociation(run.run_id, input.sessionID, "parent-chain");
-      this.associateDescendants(run.run_id, input.sessionID);
-    }
-  }
-  private addAssociation(runID: string, sessionID: string, source: AssociationSource): void {
-    this.db
-      .query(
-        "INSERT INTO run_sessions (run_id, session_id, source) VALUES (?, ?, ?) ON CONFLICT (run_id, session_id) DO UPDATE SET source = CASE WHEN run_sessions.source IN ('root', 'explicit-primary') THEN run_sessions.source ELSE excluded.source END",
-      )
-      .run(runID, sessionID, source);
-  }
-  private associateDescendants(
-    runID: string,
-    sessionID: string,
-    visited = new Set<string>(),
-  ): void {
-    if (visited.has(sessionID)) return;
-    visited.add(sessionID);
-    const children = this.db
-      .query<{ session_id: string }>("SELECT session_id FROM sessions WHERE parent_id = ?")
-      .all(sessionID);
-    for (const child of children) {
-      this.addAssociation(runID, child.session_id, "parent-chain");
-      this.associateDescendants(runID, child.session_id, visited);
-    }
-  }
-  private attachLaneToRun(run: RunRow, session: SessionInput): void {
-    const at = session.observedAt ?? Date.now();
-    this.ensureSession(session, at);
-    this.addAssociation(run.run_id, session.sessionID, "explicit-primary");
-    let parent: string | null = session.parentID ?? null;
-    while (parent && parent !== run.root_session_id) {
-      this.addAssociation(run.run_id, parent, "parent-chain");
-      parent =
-        this.db
-          .query<{ parent_id: string | null }>(
-            "SELECT parent_id FROM sessions WHERE session_id = ?",
-          )
-          .get(parent)?.parent_id ?? null;
-    }
-    this.associateDescendants(run.run_id, session.sessionID);
-  }
-  private transaction<T>(callback: () => T): T {
-    return this.db.transaction(callback)();
-  }
-  private transactionImmediate<T>(callback: () => T): T {
+  private immediate<T>(callback: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const result = callback();
       this.db.exec("COMMIT");
+      this.protectDatabaseFiles();
       return result;
     } catch (error) {
       try {
         this.db.exec("ROLLBACK");
       } catch {
-        /* preserve original */
+        // Preserve the original transaction error.
       }
       throw error;
     }
   }
+  private protectDatabaseFiles(): void {
+    protect(join(this.options.dataDir, DATABASE_FILENAME), 0o600);
+    protect(join(this.options.dataDir, `${DATABASE_FILENAME}-wal`), 0o600);
+    protect(join(this.options.dataDir, `${DATABASE_FILENAME}-shm`), 0o600);
+  }
 }
-function migrate(db: Database): void {
-  const version =
-    db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0;
-  if (version > LATEST_SCHEMA) throw new Error("tracker database schema is newer than supported");
-  if (version === LATEST_SCHEMA) return;
-  db.transaction(() => {
-    if (version < 1) {
-      db.exec(MIGRATION_1);
-      db.exec("PRAGMA user_version = 1;");
-    }
-    if (version < 2) {
-      db.exec(MIGRATION_2);
-      db.exec("PRAGMA user_version = 2;");
-    }
-    if (version < 3) {
-      db.exec(MIGRATION_3);
-      db.exec("PRAGMA user_version = 3;");
-    }
-  })();
+
+function protect(path: string, mode: number): void {
+  try {
+    chmodSync(path, mode);
+  } catch {
+    // Creation and restrictive directory permissions are the required safeguards; chmod is best effort.
+  }
 }
-export type { PhaseMapping };
