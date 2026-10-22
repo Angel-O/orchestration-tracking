@@ -42,23 +42,36 @@ validation, and managed workflow calls remain outside this foundation.
 
 ## Fixed local reporting contract
 
-`generateReport(store, selector, generatedAt)` is the renderer-facing report
-boundary. It reads only local facts and applies the fixed
-`session-attribution-v1` policy; it never queries Hub, mutates lifecycle state,
-or accepts caller-supplied phase or purpose language. Selectors may choose one
+`generateReport(store, selector, generatedAt)` is the report-generation
+boundary and writes the private JSON artifact plus a deterministic Markdown
+view. `renderReport(report)` is the pure human-readable renderer. Both read
+only local facts and apply the fixed
+`session-attribution-v1` policy; neither queries Hub, mutates lifecycle state,
+nor accepts caller-supplied phase or purpose language. Selectors may choose one
 local Bead, sessions, and an optional time range. A Bead selector automatically
 produces a standalone, child, or epic initiative report. Epic reports expose
 direct metrics and child summaries, not child lanes or action rows.
+
+The JSON view shape is selected by `report.kind`: standalone and child views
+include `sessions` and detailed `actions`, while epic views include only
+`children`. Epic metrics keep `directActiveMs`, `summedChildActiveMs`, and
+`combinedActiveMs` separate; all three are summed active milliseconds, not
+elapsed time. Epic `initiativeState` is `not-started`, `open`, or
+`closeout-bounded`, and its `elapsed` window is direct-epic activity bounded by
+successful epic closeout when observed. The Markdown epic view prints the
+first direct-activity boundary and either the successful closeout boundary or
+the generation-time boundary while open. Detailed timelines reserve `open` for
+genuinely open actions and show incomplete actions with an unknown end.
 
 Reports contain summed active milliseconds, separately calculated elapsed
 windows, outcome/session/action counts, fixed phase totals, lifecycle state,
 warnings, a privacy notice, and the two required interpretation notices:
 concurrent summed active time can exceed elapsed time, and lifecycle values
 are observed tracker states rather than authoritative Hub status. Open and
-incomplete actions contribute zero active time. The derived JSON artifact is
-written below the private data directory with a stable selector/policy identity
-and atomic replacement; report metadata records the raw-fact high-water mark
-from the same consistent snapshot used to build the report.
+incomplete actions contribute zero active time. The derived JSON and Markdown
+artifacts are written below the private data directory with a stable
+selector/policy identity and atomic replacement; report metadata records the
+raw-fact high-water mark from the same consistent snapshot used to build them.
 
 ## Attribution transitions
 

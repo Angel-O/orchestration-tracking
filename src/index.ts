@@ -41,11 +41,13 @@ export { sourceReleasePlan, type SourceReleasePlan } from "./release.js";
 export { validateBeadID, parseTimestamp } from "./validation.js";
 export {
   generateReport,
+  renderReport,
   PRIVACY_NOTICE,
   REPORT_NOTICES,
   REPORTING_POLICY_VERSION,
   REPORT_PHASES,
   type ChildSummary,
+  type InitiativeState,
   type LifecycleState,
   type NormalizedSelector,
   type OutcomeCounts,
