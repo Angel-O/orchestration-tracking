@@ -30,6 +30,7 @@ export {
   type LifecycleReceiptRecord,
   type ReportMetadata,
   type ReportMetadataRecord,
+  type ReportSnapshot,
   type RetentionCleanupResult,
   type SessionObservation,
   type SessionRecord,
@@ -38,6 +39,26 @@ export {
 export { LAUNCH_METADATA_KEY } from "./plugin.js";
 export { sourceReleasePlan, type SourceReleasePlan } from "./release.js";
 export { validateBeadID, parseTimestamp } from "./validation.js";
+export {
+  generateReport,
+  PRIVACY_NOTICE,
+  REPORT_NOTICES,
+  REPORTING_POLICY_VERSION,
+  REPORT_PHASES,
+  type ChildSummary,
+  type LifecycleState,
+  type NormalizedSelector,
+  type OutcomeCounts,
+  type PhaseMetric,
+  type ReportAction,
+  type ReportDocument,
+  type ReportGenerationResult,
+  type ReportKind,
+  type ReportMetrics,
+  type ReportPhase,
+  type ReportSelector,
+  type ReportSession,
+} from "./report.js";
 export {
   AttributionTransitions,
   runWbdShow,

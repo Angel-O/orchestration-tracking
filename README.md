@@ -40,6 +40,26 @@ descriptions, or arbitrary event payloads. Report artifact paths are relative
 keys only. Association policy, phase classification, report rendering, Hub
 validation, and managed workflow calls remain outside this foundation.
 
+## Fixed local reporting contract
+
+`generateReport(store, selector, generatedAt)` is the renderer-facing report
+boundary. It reads only local facts and applies the fixed
+`session-attribution-v1` policy; it never queries Hub, mutates lifecycle state,
+or accepts caller-supplied phase or purpose language. Selectors may choose one
+local Bead, sessions, and an optional time range. A Bead selector automatically
+produces a standalone, child, or epic initiative report. Epic reports expose
+direct metrics and child summaries, not child lanes or action rows.
+
+Reports contain summed active milliseconds, separately calculated elapsed
+windows, outcome/session/action counts, fixed phase totals, lifecycle state,
+warnings, a privacy notice, and the two required interpretation notices:
+concurrent summed active time can exceed elapsed time, and lifecycle values
+are observed tracker states rather than authoritative Hub status. Open and
+incomplete actions contribute zero active time. The derived JSON artifact is
+written below the private data directory with a stable selector/policy identity
+and atomic replacement; report metadata records the raw-fact high-water mark
+from the same consistent snapshot used to build the report.
+
 ## Attribution transitions
 
 The tracker exposes three mutation tools: `tracking_bead_created`,

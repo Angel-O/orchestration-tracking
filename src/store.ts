@@ -148,6 +148,17 @@ export interface ReportMetadataRecord {
   readonly generatedAt: number;
 }
 
+/** One read transaction containing every raw fact used by report generation. */
+export interface ReportSnapshot {
+  readonly sessions: readonly SessionRecord[];
+  readonly actions: readonly ActionRecord[];
+  readonly slices: readonly ActivitySliceRecord[];
+  readonly beads: readonly BeadRecord[];
+  readonly associations: readonly AssociationReceiptRecord[];
+  readonly closeouts: readonly CloseoutRecordView[];
+  readonly sourceHighWaterMark: number;
+}
+
 export interface RetentionCleanupResult {
   readonly slicesPruned: number;
   readonly sessionsPruned: number;
@@ -891,6 +902,44 @@ export class TrackerStore {
         sourceHighWaterMark: row.source_high_water_mark,
         generatedAt: row.generated_at,
       }));
+  }
+
+  readReportSnapshot(): ReportSnapshot {
+    return this.db.transaction(() => {
+      const sessions = this.listSessions();
+      const actions = this.listActions();
+      const slices = this.listActivitySlices();
+      const beads = this.listBeads();
+      const associations = this.listAssociationReceipts();
+      const closeouts = this.listCloseouts();
+      const timestamps = [
+        ...sessions.map((record) => record.lastObservedAt),
+        ...actions.flatMap((record) =>
+          record.endedAt === null ? [record.startedAt] : [record.startedAt, record.endedAt],
+        ),
+        ...slices.flatMap((record) =>
+          record.endedAt === null ? [record.startedAt] : [record.startedAt, record.endedAt],
+        ),
+        ...beads.map((record) => record.validatedAt),
+        ...associations.map((record) => record.observedAt),
+        ...this.listLifecycleReceipts().map((record) => record.observedAt),
+        ...closeouts.map((record) => record.closedAt),
+      ];
+      return {
+        sessions,
+        actions,
+        slices,
+        beads,
+        associations,
+        closeouts,
+        sourceHighWaterMark: timestamps.length === 0 ? 0 : Math.max(...timestamps),
+      };
+    })();
+  }
+
+  /** Latest timestamp in raw local facts used by deterministic regeneration. */
+  sourceHighWaterMark(): number {
+    return this.readReportSnapshot().sourceHighWaterMark;
   }
 
   private sessionRow(sessionID: string): SessionRow | undefined {
