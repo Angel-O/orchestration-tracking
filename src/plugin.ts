@@ -1,4 +1,5 @@
 import { Plugin } from "@opencode/plugin";
+import { basename } from "node:path";
 import {
   AttributionTransitions,
   validateAuthoritativeBead,
@@ -115,6 +116,16 @@ function diagnose(message: string, error: unknown): void {
   console.warn(`[${PLUGIN_ID}] ${message}: ${kind}`);
 }
 
+/** Keep only the final configured project directory component; never persist its path. */
+function privacySafeProjectLabel(location: unknown): string {
+  if (!isRecord(location)) return "unknown";
+  const project = isRecord(location.project) ? location.project : undefined;
+  const directory = project?.directory ?? location.directory;
+  if (typeof directory !== "string") return "unknown";
+  const label = basename(directory);
+  return label && label !== "." && label !== ".." ? label : "unknown";
+}
+
 type HostSession = {
   readonly id: string;
   readonly parentID?: string;
@@ -213,6 +224,9 @@ export const TrackerPlugin = Plugin.define({
     } catch (error) {
       diagnose("retention cleanup failed; delivery continues", error);
     }
+    const configuredProjectLabel = privacySafeProjectLabel(
+      (ctx as unknown as { readonly location?: unknown }).location,
+    );
     let lastCleanupAt = Date.now();
     const maybeCleanup = (): void => {
       const now = Date.now();
@@ -237,6 +251,7 @@ export const TrackerPlugin = Plugin.define({
             sessionID: hostSession.id,
             parentSessionID: hostSession.parentID,
             observedAt: startedAt,
+            projectLabel: configuredProjectLabel,
           });
           await consumeLaunchDescriptor(
             ctx.session as unknown as {
@@ -376,6 +391,7 @@ export const TrackerPlugin = Plugin.define({
                 sessionID: event.data.sessionID,
                 parentSessionID: event.data.parentID,
                 observedAt: event.created,
+                projectLabel: configuredProjectLabel,
                 receipt: {
                   eventID: event.id,
                   aggregateID: event.durable?.aggregateID ?? event.data.sessionID,
