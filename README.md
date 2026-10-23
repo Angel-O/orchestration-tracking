@@ -60,6 +60,15 @@ values, and no scripts, links, fonts, or network assets. Epic detail retains
 direct metrics and child summaries from that model while showing the captured
 pass and timeline projection.
 
+The implementation keeps that contract visible in `src/reporting/`: `models.ts`
+contains value shapes and policy constants, `build.ts` makes the snapshot-only
+projections, `markdown.ts` and `html.ts` render those values, and
+`artifacts.ts` owns filesystem writes and report metadata persistence.
+`viewer.ts` is the only reporting module that serves network responses or
+launches a browser. `src/report.ts`, `src/report-html.ts`, and
+`src/report-viewer.ts` remain compatibility facades for the previous internal
+paths; the package root continues to expose the same report API.
+
 `createReportViewer(store, selector)` is the narrow browser-delivery boundary.
 It freezes the normalized selector, listens on an IPv4 loopback random port,
 and returns `{ url, expiresAt, browserOpened, dispose }`. The server accepts
