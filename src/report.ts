@@ -9,6 +9,7 @@ import type {
   BeadRecord,
   BeadType,
   CloseoutRecordView,
+  ReportSnapshot,
   SessionRecord,
   TrackerStore,
 } from "./store.js";
@@ -132,6 +133,109 @@ export interface ReportDocument {
   readonly sessions?: readonly ReportSession[];
   readonly actions?: readonly ReportAction[];
   readonly children?: readonly ChildSummary[];
+}
+
+/** One captured phase bucket for the report-detail renderer. */
+export interface ReportDetailPhaseTotal {
+  readonly phaseKey: string;
+  readonly phaseLabel: string;
+  readonly color: string;
+  readonly activeMs: number;
+  readonly passCount: number;
+}
+
+/** One observed-agent bucket for the report-detail renderer. */
+export interface ReportDetailAgentTotal {
+  readonly agent: string;
+  readonly activeMs: number;
+  readonly passCount: number;
+}
+
+export interface ReportDetailSessionTotal {
+  readonly sessionID: string;
+  readonly projectLabel: string;
+  readonly activeMs: number;
+  readonly passCount: number;
+  readonly outcomes: OutcomeCounts;
+}
+
+export interface ReportDetailTimelineSegment {
+  readonly sliceID: number;
+  readonly startedAt: number;
+  readonly endedAt: number | null;
+  readonly activeMs: number;
+  /** Percentages share the model's single selected time scale. */
+  readonly startPercent: number;
+  readonly endPercent: number;
+  readonly widthPercent: number;
+}
+
+export interface ReportDetailPass {
+  readonly passNumber: number;
+  readonly sessionID: string;
+  readonly actionID: string;
+  readonly agent: string;
+  readonly phaseKey: string;
+  readonly phaseLabel: string;
+  readonly color: string;
+  readonly outcome: ActionOutcome;
+  readonly startedAt: number;
+  readonly endedAt: number | null;
+  readonly activeMs: number;
+  readonly segments: readonly ReportDetailTimelineSegment[];
+}
+
+export interface ReportDetailRepeatSignal {
+  readonly sessionID: string;
+  readonly agent: string;
+  readonly phaseLabel: string;
+  readonly passes: number;
+  readonly repeated: boolean;
+  readonly passNumbers: readonly number[];
+  readonly count: number;
+  readonly repeatCount: number;
+}
+
+/**
+ * Internal, write-free report-detail projection. It is built beside ReportDocument
+ * so the HTML renderer never needs to reinterpret raw tracker facts.
+ */
+export interface ReportDetailModel {
+  readonly kind: ReportKind;
+  readonly beadID?: string;
+  readonly status: LifecycleState;
+  readonly generatedAt: number;
+  readonly finalizedAt: number | null;
+  readonly selection: NormalizedSelector;
+  /** Current structured metrics retained for epic direct/child rendering. */
+  readonly metrics: ReportMetrics;
+  readonly phaseTotals: Readonly<Record<ReportPhase, PhaseMetric>>;
+  readonly children?: readonly ChildSummary[];
+  readonly projectLabel: string | null;
+  readonly projectLabels: readonly string[];
+  readonly durations: {
+    readonly activeMs: number;
+    readonly elapsedMs: number;
+  };
+  readonly phases: readonly ReportDetailPhaseTotal[];
+  readonly agents: readonly ReportDetailAgentTotal[];
+  readonly sessions: readonly ReportDetailSessionTotal[];
+  readonly passes: readonly ReportDetailPass[];
+  readonly scale: {
+    readonly startAt: number | null;
+    readonly endAt: number | null;
+    readonly durationMs: number;
+  };
+  readonly repeats: readonly ReportDetailRepeatSignal[];
+  readonly incomplete: boolean;
+  readonly unmapped: boolean;
+  readonly warnings: readonly string[];
+}
+
+export interface ReportModels {
+  readonly selector: NormalizedSelector;
+  readonly report: ReportDocument;
+  readonly reportDetail: ReportDetailModel;
 }
 
 export interface ReportGenerationResult {
@@ -410,12 +514,18 @@ function timestamp(value: unknown, name: string): number {
 function normalizeSelector(input: ReportSelector): NormalizedSelector {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new Error("report selector must be an object");
-  const bead = input.bead === undefined ? undefined : validateBeadID(input.bead);
-  const sessions = input.sessions === undefined ? undefined : [...new Set(input.sessions)].sort();
+  const value = input as ReportSelector & Record<string, unknown>;
+  const supportedKeys = new Set(["bead", "sessions", "from", "to"]);
+  if (Reflect.ownKeys(input).some((key) => typeof key !== "string" || !supportedKeys.has(key)))
+    throw new Error("report selector contains unsupported keys");
+  const bead = value.bead === undefined ? undefined : validateBeadID(value.bead);
+  if (value.sessions !== undefined && !Array.isArray(value.sessions))
+    throw new Error("report session selector is invalid");
+  const sessions = value.sessions === undefined ? undefined : [...new Set(value.sessions)].sort();
   if (sessions?.some((sessionID) => !isIdentifier(sessionID)))
     throw new Error("report session selector is invalid");
-  const from = input.from === undefined ? undefined : timestamp(input.from, "from");
-  const to = input.to === undefined ? undefined : timestamp(input.to, "to");
+  const from = value.from === undefined ? undefined : timestamp(value.from, "from");
+  const to = value.to === undefined ? undefined : timestamp(value.to, "to");
   if (from !== undefined && to !== undefined && to < from)
     throw new Error("report selector range is invalid");
   return {
@@ -706,54 +816,226 @@ function writePrivateArtifact(reportDirectory: string, fileName: string, content
   return artifactPath;
 }
 
-function entriesForBead(
-  beadID: string,
-  slices: readonly ActivitySliceRecord[],
-  actions: ReadonlyMap<string, ActionRecord>,
-  sessions: ReadonlyMap<string, SessionRecord>,
-  beads: ReadonlyMap<string, BeadRecord>,
-  selector: NormalizedSelector,
-  generatedAt: number,
-  allSessions: readonly SessionRecord[],
-  allActions: readonly ActionRecord[],
-  allSlices: readonly ActivitySliceRecord[],
-  creationScopeStarts: ReadonlyMap<string, number>,
-): Entry[] {
-  return slices
-    .filter((slice) => {
-      const action = actions.get(`${slice.sessionID}:${slice.actionID}`);
-      return (
-        slice.beadID === beadID &&
-        action !== undefined &&
-        selectedSlice(slice, action, { ...selector, bead: beadID }, generatedAt)
-      );
-    })
-    .map((slice) => {
-      const action = actions.get(`${slice.sessionID}:${slice.actionID}`)!;
-      return toEntry(
-        slice,
-        action,
-        sessions.get(slice.sessionID)!,
-        beads.get(beadID),
-        selector,
-        generatedAt,
-        allSessions,
-        allActions,
-        allSlices,
-        creationScopeStarts,
-      );
-    });
+const REPORT_DETAIL_PHASE_COLORS = [
+  "#cfe8ff",
+  "#d9f2d9",
+  "#ffe4b5",
+  "#eadcff",
+  "#ffd6e7",
+  "#d8f3f0",
+] as const;
+
+function reportDetailPhaseColor(phaseKey: string): string {
+  let hash = 0;
+  for (const character of phaseKey) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return REPORT_DETAIL_PHASE_COLORS[(hash >>> 0) % REPORT_DETAIL_PHASE_COLORS.length]!;
 }
 
-/** Classify local facts and atomically replace one private JSON artifact. */
-export function generateReport(
-  store: TrackerStore,
+function buildReportDetail(
+  entries: readonly Entry[],
+  report: ReportDocument,
+  closeouts: readonly CloseoutRecordView[],
+  now: number,
+): ReportDetailModel {
+  const actionEntries = new Map<string, Entry[]>();
+  for (const entry of entries) {
+    const key = `${entry.action.sessionID}:${entry.action.actionID}`;
+    actionEntries.set(key, [...(actionEntries.get(key) ?? []), entry]);
+  }
+  const passes = [...actionEntries.values()]
+    .map((passEntries) => {
+      const first = passEntries[0]!;
+      const segments = passEntries
+        .slice()
+        .sort(
+          (left, right) =>
+            left.startedAt - right.startedAt || left.slice.sliceID - right.slice.sliceID,
+        );
+      const startAt = Math.min(...segments.map((entry) => entry.startedAt));
+      const endAt = Math.max(...segments.map((entry) => entry.endedAt ?? entry.startedAt));
+      return {
+        first,
+        startAt,
+        endAt,
+        activeMs: segments.reduce((total, entry) => total + entry.activeMs, 0),
+        segments,
+      };
+    })
+    .sort(
+      (left, right) =>
+        left.startAt - right.startAt ||
+        left.first.action.sessionID.localeCompare(right.first.action.sessionID) ||
+        left.first.action.passNumber - right.first.action.passNumber ||
+        left.first.action.actionID.localeCompare(right.first.action.actionID),
+    );
+
+  const scaleStart =
+    entries.length === 0 ? null : Math.min(...entries.map((entry) => entry.startedAt));
+  const scaleEnd =
+    entries.length === 0
+      ? null
+      : Math.max(...entries.map((entry) => entry.endedAt ?? entry.startedAt));
+  const scaleDuration =
+    scaleStart === null || scaleEnd === null ? 0 : Math.max(0, scaleEnd - scaleStart);
+  const percent = (value: number): number =>
+    scaleDuration === 0 ? 0 : ((value - scaleStart!) / scaleDuration) * 100;
+  const timeline = (entry: Entry): ReportDetailTimelineSegment => {
+    const endedAt = entry.endedAt;
+    const visibleEnd = endedAt ?? entry.startedAt;
+    return {
+      sliceID: entry.slice.sliceID,
+      startedAt: entry.startedAt,
+      endedAt,
+      activeMs: entry.activeMs,
+      startPercent: percent(entry.startedAt),
+      endPercent: percent(visibleEnd),
+      widthPercent: Math.max(0, percent(visibleEnd) - percent(entry.startedAt)),
+    };
+  };
+  const reportDetailPasses: ReportDetailPass[] = passes.map(
+    ({ first, endAt, activeMs, segments }) => ({
+      passNumber: first.action.passNumber,
+      sessionID: first.action.sessionID,
+      actionID: first.action.actionID,
+      agent: first.action.observedRole,
+      phaseKey: first.action.phaseKey,
+      phaseLabel: first.action.phaseLabel,
+      color: reportDetailPhaseColor(first.action.phaseKey),
+      outcome: first.action.outcome,
+      startedAt: Math.min(...segments.map((entry) => entry.startedAt)),
+      endedAt: first.action.endedAt === null ? null : endAt,
+      activeMs,
+      segments: segments.map(timeline),
+    }),
+  );
+
+  const phases = new Map<string, ReportDetailPhaseTotal>();
+  const agents = new Map<string, ReportDetailAgentTotal>();
+  const sessions = new Map<string, ReportDetailSessionTotal>();
+  for (const pass of passes) {
+    const first = pass.first;
+    const phaseKey = first.action.phaseKey;
+    const phase = phases.get(phaseKey);
+    phases.set(phaseKey, {
+      phaseKey,
+      phaseLabel: first.action.phaseLabel,
+      color: reportDetailPhaseColor(phaseKey),
+      activeMs: (phase?.activeMs ?? 0) + pass.activeMs,
+      passCount: (phase?.passCount ?? 0) + 1,
+    });
+    const agent = first.action.observedRole;
+    const agentTotal = agents.get(agent);
+    agents.set(agent, {
+      agent,
+      activeMs: (agentTotal?.activeMs ?? 0) + pass.activeMs,
+      passCount: (agentTotal?.passCount ?? 0) + 1,
+    });
+    const session = sessions.get(first.action.sessionID);
+    const outcomes = { ...(session?.outcomes ?? emptyOutcomes()) };
+    outcomes[first.action.outcome] += 1;
+    sessions.set(first.action.sessionID, {
+      sessionID: first.action.sessionID,
+      projectLabel: first.session.projectLabel,
+      activeMs: (session?.activeMs ?? 0) + pass.activeMs,
+      passCount: (session?.passCount ?? 0) + 1,
+      outcomes,
+    });
+  }
+
+  const repeatGroups = new Map<string, number[]>();
+  for (const pass of passes) {
+    if (!pass.first.action.repeatEligible) continue;
+    const key = `${pass.first.action.sessionID}\u0000${pass.first.action.observedRole}`;
+    const group = repeatGroups.get(key) ?? [];
+    group.push(pass.first.action.passNumber);
+    repeatGroups.set(key, group);
+  }
+  const repeats: ReportDetailRepeatSignal[] = [...repeatGroups.entries()]
+    .filter(([, passNumbers]) => passNumbers.length > 1)
+    .map(([key, passNumbers]) => {
+      const [sessionID, agent] = key.split("\u0000", 2) as [string, string];
+      return {
+        sessionID,
+        agent,
+        phaseLabel:
+          passNumbers.length > 0
+            ? passes.find(
+                (pass) =>
+                  pass.first.action.sessionID === sessionID &&
+                  pass.first.action.observedRole === agent &&
+                  pass.first.action.repeatEligible,
+              )!.first.action.phaseLabel
+            : "Unmapped",
+        passes: passNumbers.length,
+        repeated: true,
+        passNumbers: [...passNumbers].sort((left, right) => left - right),
+        count: passNumbers.length,
+        repeatCount: passNumbers.length - 1,
+      };
+    })
+    .sort(
+      (left, right) =>
+        left.sessionID.localeCompare(right.sessionID) || left.agent.localeCompare(right.agent),
+    );
+
+  const projectLabels = [...new Set(entries.map((entry) => entry.session.projectLabel))].sort();
+  const incomplete = passes.some(({ first }) => first.action.outcome === "incomplete");
+  const unmapped = passes.some(({ first }) => first.action.phaseKey === "unmapped");
+  const warnings = [
+    ...new Set([
+      ...report.warnings,
+      ...passes.flatMap(({ first }) => [
+        ...(first.action.outcome === "incomplete"
+          ? [`incomplete pass in ${first.action.sessionID}`]
+          : []),
+        ...(first.action.phaseKey === "unmapped"
+          ? [`unmapped agent in ${first.action.sessionID}`]
+          : []),
+      ]),
+    ]),
+  ].sort();
+  const finalizedAt =
+    report.beadID === undefined
+      ? null
+      : (closeouts.find((closeout) => closeout.beadID === report.beadID)?.closedAt ?? null);
+  return {
+    kind: report.kind,
+    ...(report.beadID === undefined ? {} : { beadID: report.beadID }),
+    status: report.lifecycleState,
+    generatedAt: now,
+    finalizedAt,
+    selection: report.selector,
+    metrics: report.metrics,
+    phaseTotals: report.phaseTotals,
+    ...(report.children === undefined ? {} : { children: report.children }),
+    projectLabel: projectLabels.length === 1 ? projectLabels[0]! : null,
+    projectLabels,
+    durations: {
+      activeMs: passes.reduce((total, pass) => total + pass.activeMs, 0),
+      elapsedMs: report.elapsed.durationMs,
+    },
+    phases: [...phases.values()],
+    agents: [...agents.values()],
+    sessions: [...sessions.values()].sort((left, right) =>
+      left.sessionID.localeCompare(right.sessionID),
+    ),
+    passes: reportDetailPasses,
+    scale: { startAt: scaleStart, endAt: scaleEnd, durationMs: scaleDuration },
+    repeats,
+    incomplete,
+    unmapped,
+    warnings,
+  };
+}
+
+/** Build both report projections from one immutable snapshot without writing. */
+export function buildReportModels(
+  snapshot: ReportSnapshot,
   input: ReportSelector = {},
   generatedAt = Date.now(),
-): ReportGenerationResult {
+): ReportModels {
   const now = timestamp(generatedAt, "generatedAt");
   const selector = normalizeSelector(input);
-  const snapshot = store.readReportSnapshot();
   const { sessions, actions, slices, beads, closeouts } = snapshot;
   const beadMap = new Map(beads.map((bead) => [bead.beadID, bead]));
   const actionMap = new Map(
@@ -761,10 +1043,12 @@ export function generateReport(
   );
   const sessionMap = new Map(sessions.map((session) => [session.sessionID, session]));
   const creationStarts = creationScopeStarts(snapshot.associations, actions);
-  const entries = slices
+  const selectedEntries = slices
     .filter((slice) => {
       const action = actionMap.get(`${slice.sessionID}:${slice.actionID}`);
-      return action !== undefined && selectedSlice(slice, action, selector, now);
+      return (
+        action !== undefined && selectedSlice(slice, action, { ...selector, bead: undefined }, now)
+      );
     })
     .map((slice) => {
       const action = actionMap.get(`${slice.sessionID}:${slice.actionID}`)!;
@@ -784,6 +1068,10 @@ export function generateReport(
     .sort(
       (left, right) => left.startedAt - right.startedAt || left.slice.sliceID - right.slice.sliceID,
     );
+  const entries =
+    selector.bead === undefined
+      ? selectedEntries
+      : selectedEntries.filter((entry) => entry.slice.beadID === selector.bead);
   const selectedBead = selector.bead === undefined ? undefined : beadMap.get(selector.bead);
   if (selector.bead !== undefined && !selectedBead)
     throw new Error("report bead is not locally validated");
@@ -820,18 +1108,8 @@ export function generateReport(
     const childRecords = beads.filter((bead) => bead.parentBeadID === selectedBead!.beadID);
     const childWarnings: string[] = [];
     children = childRecords.map((childRecord) => {
-      const childEntries = entriesForBead(
-        childRecord.beadID,
-        slices,
-        actionMap,
-        sessionMap,
-        beadMap,
-        selector,
-        now,
-        sessions,
-        actions,
-        slices,
-        creationStarts,
+      const childEntries = selectedEntries.filter(
+        (entry) => entry.slice.beadID === childRecord.beadID,
       );
       const childWindow = workWindow(childEntries, now);
       const child = metrics(childEntries, childWindow.durationMs);
@@ -914,6 +1192,30 @@ export function generateReport(
           })),
         }),
   };
+  const reportDetailEntries =
+    kind === "epic"
+      ? [
+          ...entries,
+          ...children!.flatMap((child) =>
+            selectedEntries.filter((entry) => entry.slice.beadID === child.beadID),
+          ),
+        ]
+      : entries;
+  return {
+    selector,
+    report,
+    reportDetail: buildReportDetail(reportDetailEntries, report, closeouts, now),
+  };
+}
+
+/** Classify local facts and atomically replace one private JSON artifact. */
+export function generateReport(
+  store: TrackerStore,
+  input: ReportSelector = {},
+  generatedAt = Date.now(),
+): ReportGenerationResult {
+  const snapshot = store.readReportSnapshot();
+  const { report, selector } = buildReportModels(snapshot, input, generatedAt);
   const reportID = stableReportID(selector);
   const artifactKey = `reports/${reportID}.json`;
   const renderedArtifactKey = `reports/${reportID}.md`;
@@ -937,7 +1239,7 @@ export function generateReport(
     selectorFingerprint: reportID.slice("report-".length),
     policyVersion: REPORTING_POLICY_VERSION,
     sourceHighWaterMark,
-    generatedAt: now,
+    generatedAt: report.generatedAt,
   });
   return {
     reportID,

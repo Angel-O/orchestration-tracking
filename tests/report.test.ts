@@ -3,12 +3,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { parseOptions } from "../src/options.js";
-import { generateReport, renderReport } from "../src/report.js";
-import { TrackerStore } from "../src/store.js";
+import { buildReportModels, generateReport, renderReport } from "../src/report.js";
+import { TrackerStore, type ReportSnapshot } from "../src/store.js";
 
 function fixture(): { directory: string; store: TrackerStore } {
   const directory = mkdtempSync(join(tmpdir(), "tracker-report-"));
   return { directory, store: TrackerStore.open(parseOptions({ dataDir: directory })) };
+}
+
+function emptySnapshot(): ReportSnapshot {
+  return {
+    sessions: [],
+    actions: [],
+    slices: [],
+    beads: [],
+    associations: [],
+    closeouts: [],
+    sourceHighWaterMark: 0,
+  };
 }
 
 function end(
@@ -139,6 +151,25 @@ test("classifies fixed phases and separates direct, child, active, and elapsed m
     expect(epic.children?.map((summary) => [summary.beadID, summary.metrics.activeMs])).toEqual([
       ["child-1", 300],
     ]);
+    const epicModels = buildReportModels(store.readReportSnapshot(), { bead: "epic-1" }, 500);
+    expect(epicModels.reportDetail.passes.map((pass) => pass.actionID)).toEqual([
+      "scope",
+      "implement",
+      "coordinate",
+      "review",
+      "unknown",
+      "open",
+    ]);
+    expect(epicModels.reportDetail.durations.activeMs).toBe(450);
+    expect(epicModels.reportDetail.metrics).toMatchObject({
+      directActiveMs: 150,
+      summedChildActiveMs: 300,
+      combinedActiveMs: 450,
+    });
+    expect(epicModels.reportDetail.phaseTotals.coordination.activeMs).toBe(50);
+    expect(
+      epicModels.reportDetail.children?.map((child) => [child.beadID, child.metrics.activeMs]),
+    ).toEqual([["child-1", 300]]);
     expect(epic.actions).toBeUndefined();
     const epicView = renderReport(epic);
     expect(epicView).toContain("## Metric cards");
@@ -401,4 +432,233 @@ test("regenerates one stable private artifact atomically and excludes source con
     store.close();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("builds the current document and one clipped multi-segment report-detail pass without writes", () => {
+  const snapshot: ReportSnapshot = {
+    sessions: [
+      {
+        sessionID: "session-a",
+        parentSessionID: null,
+        projectLabel: "project-a",
+        firstObservedAt: 1,
+        lastObservedAt: 100,
+      },
+    ],
+    actions: [
+      {
+        sessionID: "session-a",
+        actionID: "pass-a",
+        passNumber: 1,
+        observedRole: "worker",
+        phaseKey: "implementation",
+        phaseLabel: "Implementation",
+        repeatEligible: true,
+        startedAt: 10,
+        endedAt: 100,
+        outcome: "completed",
+        startReceiptID: null,
+      },
+      {
+        sessionID: "session-a",
+        actionID: "pass-b",
+        passNumber: 2,
+        observedRole: "worker",
+        phaseKey: "implementation",
+        phaseLabel: "Implementation",
+        repeatEligible: true,
+        startedAt: 60,
+        endedAt: 80,
+        outcome: "completed",
+        startReceiptID: null,
+      },
+    ],
+    slices: [
+      {
+        sliceID: 1,
+        actionID: "pass-a",
+        sessionID: "session-a",
+        beadID: "bead-a",
+        associationSource: "selection",
+        startedAt: 10,
+        endedAt: 20,
+      },
+      {
+        sliceID: 2,
+        actionID: "pass-a",
+        sessionID: "session-a",
+        beadID: "bead-a",
+        associationSource: "selection",
+        startedAt: 40,
+        endedAt: 100,
+      },
+      {
+        sliceID: 3,
+        actionID: "pass-b",
+        sessionID: "session-a",
+        beadID: "bead-a",
+        associationSource: "selection",
+        startedAt: 60,
+        endedAt: 80,
+      },
+    ],
+    beads: [{ beadID: "bead-a", type: "feature", parentBeadID: null, validatedAt: 1 }],
+    associations: [
+      {
+        receiptID: "association-a",
+        sessionID: "session-a",
+        beadID: "bead-a",
+        source: "selection",
+        observedAt: 1,
+        sourceReceiptID: null,
+      },
+    ],
+    closeouts: [],
+    sourceHighWaterMark: 100,
+  };
+
+  const models = buildReportModels(snapshot, { bead: "bead-a", from: 15, to: 80 }, 120);
+  expect(models.report).toMatchObject({
+    kind: "standalone",
+    selector: { bead: "bead-a", from: 15, to: 80 },
+    metrics: { activeMs: 65, actionCount: 2 },
+  });
+  expect(models.reportDetail).toMatchObject({
+    status: "Active — closeout not observed",
+    projectLabel: "project-a",
+    selection: { bead: "bead-a", from: 15, to: 80 },
+    durations: { activeMs: 65 },
+    scale: { startAt: 15, endAt: 80, durationMs: 65 },
+  });
+  expect(models.reportDetail.passes).toHaveLength(2);
+  expect(models.reportDetail.passes[0]).toMatchObject({
+    passNumber: 1,
+    phaseKey: "implementation",
+    color: "#cfe8ff",
+    activeMs: 45,
+  });
+  expect(models.reportDetail.passes[0]?.segments).toEqual([
+    {
+      sliceID: 1,
+      startedAt: 15,
+      endedAt: 20,
+      activeMs: 5,
+      startPercent: 0,
+      endPercent: (5 / 65) * 100,
+      widthPercent: (5 / 65) * 100,
+    },
+    {
+      sliceID: 2,
+      startedAt: 40,
+      endedAt: 80,
+      activeMs: 40,
+      startPercent: (25 / 65) * 100,
+      endPercent: 100,
+      widthPercent: 100 - (25 / 65) * 100,
+    },
+  ]);
+  expect(models.reportDetail.repeats).toEqual([
+    {
+      sessionID: "session-a",
+      agent: "worker",
+      phaseLabel: "Implementation",
+      passes: 2,
+      repeated: true,
+      passNumbers: [1, 2],
+      count: 2,
+      repeatCount: 1,
+    },
+  ]);
+});
+
+test("the pure builder validates selector shape while preserving explicit empty and unknown sessions", () => {
+  const empty = emptySnapshot();
+  expect(buildReportModels(empty, { sessions: [] }, 1).report.selector).toEqual({ sessions: [] });
+  expect(
+    buildReportModels(empty, { sessions: ["missing-session"] }, 1).report.metrics,
+  ).toMatchObject({
+    sessionCount: 0,
+    actionCount: 0,
+  });
+  expect(() => buildReportModels(empty, { unsupported: true } as never, 1)).toThrow(
+    /report selector contains unsupported keys/u,
+  );
+  expect(() => buildReportModels(empty, { sessions: "session-a" } as never, 1)).toThrow(
+    /report session selector is invalid/u,
+  );
+  expect(() => buildReportModels(empty, { sessions: [1] } as never, 1)).toThrow(
+    /report session selector is invalid/u,
+  );
+});
+
+test("report-detail warnings include incomplete/unmapped passes and exclude non-repeatable or single passes", () => {
+  const snapshot: ReportSnapshot = {
+    sessions: [
+      {
+        sessionID: "session-a",
+        parentSessionID: null,
+        projectLabel: "project-a",
+        firstObservedAt: 1,
+        lastObservedAt: 30,
+      },
+    ],
+    actions: [
+      {
+        sessionID: "session-a",
+        actionID: "incomplete-pass",
+        passNumber: 1,
+        observedRole: "worker",
+        phaseKey: "implementation",
+        phaseLabel: "Implementation",
+        repeatEligible: true,
+        startedAt: 10,
+        endedAt: null,
+        outcome: "incomplete",
+        startReceiptID: "receipt-a",
+      },
+      {
+        sessionID: "session-a",
+        actionID: "unmapped-pass",
+        passNumber: 2,
+        observedRole: "worker",
+        phaseKey: "unmapped",
+        phaseLabel: "Unmapped",
+        repeatEligible: false,
+        startedAt: 20,
+        endedAt: 30,
+        outcome: "completed",
+        startReceiptID: null,
+      },
+    ],
+    slices: [
+      {
+        sliceID: 1,
+        actionID: "incomplete-pass",
+        sessionID: "session-a",
+        beadID: null,
+        associationSource: null,
+        startedAt: 10,
+        endedAt: null,
+      },
+      {
+        sliceID: 2,
+        actionID: "unmapped-pass",
+        sessionID: "session-a",
+        beadID: null,
+        associationSource: null,
+        startedAt: 20,
+        endedAt: 30,
+      },
+    ],
+    beads: [],
+    associations: [],
+    closeouts: [],
+    sourceHighWaterMark: 30,
+  };
+  const reportDetail = buildReportModels(snapshot, {}, 40).reportDetail;
+  expect(reportDetail.warnings).toContain("incomplete pass in session-a");
+  expect(reportDetail.warnings).toContain("unmapped agent in session-a");
+  expect(reportDetail.repeats).toEqual([]);
+  expect(reportDetail.incomplete).toBe(true);
+  expect(reportDetail.unmapped).toBe(true);
 });

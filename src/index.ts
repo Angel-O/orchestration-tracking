@@ -41,6 +41,7 @@ export { sourceReleasePlan, type SourceReleasePlan } from "./release.js";
 export { validateBeadID, parseTimestamp } from "./validation.js";
 export {
   generateReport,
+  buildReportModels,
   renderReport,
   PRIVACY_NOTICE,
   REPORT_NOTICES,
@@ -48,6 +49,13 @@ export {
   REPORT_PHASES,
   type ChildSummary,
   type InitiativeState,
+  type ReportDetailAgentTotal,
+  type ReportDetailModel,
+  type ReportDetailPass,
+  type ReportDetailPhaseTotal,
+  type ReportDetailRepeatSignal,
+  type ReportDetailSessionTotal,
+  type ReportDetailTimelineSegment,
   type LifecycleState,
   type NormalizedSelector,
   type OutcomeCounts,
@@ -57,10 +65,21 @@ export {
   type ReportGenerationResult,
   type ReportKind,
   type ReportMetrics,
+  type ReportModels,
   type ReportPhase,
   type ReportSelector,
   type ReportSession,
 } from "./report.js";
+export { renderReportDetailHtml } from "./report-html.js";
+export {
+  createReportViewer,
+  launchReportViewerBrowser,
+  REPORT_VIEWER_LIFETIME_MS,
+  type ReportViewer,
+  type ReportViewerLauncher,
+  type ReportViewerMetadata,
+  type ReportViewerOptions,
+} from "./report-viewer.js";
 export {
   AttributionTransitions,
   runWbdShow,

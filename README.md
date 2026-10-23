@@ -5,17 +5,18 @@ only privacy-safe lifecycle facts in a local private SQLite database.
 
 ## Foundation contract
 
-`TrackerStore` opens `tracker-v2.sqlite` below the configured absolute
-`dataDir`. This is a clean break from the previous tracker file: it never
-opens, migrates, or imports `tracker.sqlite`. The store creates a fresh schema
+`TrackerStore` opens `tracker-v3.sqlite` below the configured absolute
+`dataDir`. This is a clean break from the previous tracker generation: it never
+opens, migrates, or imports `tracker-v2.sqlite`. The store creates a fresh schema
 with foreign keys, WAL journaling, a five-second busy timeout, a private
 directory (`0700`), and a private database (`0600`).
 
 The raw records are:
 
-- `sessions`: opaque session identity, optional parent identity, and observed
-  time bounds;
-- `actions`: opaque host action identity, one fixed observed role, lifecycle
+- `sessions`: opaque session identity, optional parent identity, a privacy-safe
+  project label, and observed time bounds;
+- `actions`: opaque host action identity, a replay-stable per-session pass
+  number, one fixed observed role, captured phase mapping facts, lifecycle
   outcome, and authoritative start/end times;
 - `activity_slices`: action portions split at association boundaries;
 - `beads`: validated canonical ID, type, and immutable direct epic parent;
@@ -37,7 +38,7 @@ another store instance never performs recovery.
 The store accepts no prompts, responses, transcripts, context labels, tool
 payloads, tokens, Git metadata, filesystem paths, command output, titles,
 descriptions, or arbitrary event payloads. Report artifact paths are relative
-keys only. Association policy, phase classification, report rendering, Hub
+keys only. Association policy, report classification, report rendering, Hub
 validation, and managed workflow calls remain outside this foundation.
 
 ## Fixed local reporting contract
@@ -51,6 +52,21 @@ nor accepts caller-supplied phase or purpose language. Selectors may choose one
 local Bead, sessions, and an optional time range. A Bead selector automatically
 produces a standalone, child, or epic initiative report. Epic reports expose
 direct metrics and child summaries, not child lanes or action rows.
+
+`renderReportDetailHtml(detail)` is the pure self-contained HTML renderer. Its
+input is exactly `buildReportModels(...).reportDetail`; it does not select,
+rebuild, or read tracker facts. The output uses inline CSS, escaped dynamic
+values, and no scripts, links, fonts, or network assets. Epic detail retains
+direct metrics and child summaries from that model while showing the captured
+pass and timeline projection.
+
+`createReportViewer(store, selector)` is the narrow browser-delivery boundary.
+It freezes the normalized selector, listens on an IPv4 loopback random port,
+and returns `{ url, expiresAt, browserOpened, dispose }`. The server accepts
+only `GET`/`HEAD` for its exact token route, rebuilds from a fresh SQLite
+snapshot for every request, and disposes after ten minutes; `dispose` is
+idempotent. Browser launch is native and best-effort, and never changes the
+usable URL.
 
 The JSON view shape is selected by `report.kind`: standalone and child views
 include `sessions` and detailed `actions`, while epic views include only

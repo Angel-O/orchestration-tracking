@@ -103,6 +103,7 @@ describe("authoritative attribution transitions", () => {
         },
       },
       event: { subscribe: async function* () {} },
+      reportViewerOptions: { launch: () => false },
     };
     const cleanup = await TrackerPlugin.setup(context as never);
     try {
@@ -114,7 +115,31 @@ describe("authoritative attribution transitions", () => {
         { beadID: "bead-close" },
         { sessionID: "root", toolCallID: "closeout-call" },
       );
-      expect(result.output).toEqual({ ok: true, changed: true });
+      const firstOutput = result.output as {
+        ok: boolean;
+        changed: boolean;
+        viewer: { url: string; expiresAt: number; browserOpened: boolean };
+      };
+      expect(firstOutput.ok).toBe(true);
+      expect(firstOutput.changed).toBe(true);
+      expect(firstOutput.viewer.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/report\//u);
+      expect(typeof firstOutput.viewer.expiresAt).toBe("number");
+      expect(firstOutput.viewer.browserOpened).toBe(false);
+      const viewerURL = firstOutput.viewer.url;
+      expect(await (await fetch(viewerURL)).text()).toContain("bead-close");
+      const replay = await closeout.execute(
+        { beadID: "bead-close" },
+        { sessionID: "root", toolCallID: "closeout-replay" },
+      );
+      const replayOutput = replay.output as {
+        ok: boolean;
+        changed: boolean;
+        viewer: { url: string; browserOpened: boolean };
+      };
+      expect(replayOutput.ok).toBe(true);
+      expect(replayOutput.changed).toBe(false);
+      expect(replayOutput.viewer.browserOpened).toBe(false);
+      expect(await (await fetch(replayOutput.viewer.url)).text()).toContain("bead-close");
       expect(existsSync(join(directory, "reports"))).toBe(true);
       const files = readdirSync(join(directory, "reports"));
       expect(files).toHaveLength(2);
@@ -165,6 +190,7 @@ describe("authoritative attribution transitions", () => {
         },
       },
       event: { subscribe: async function* () {} },
+      reportViewerOptions: { launch: () => false },
     };
     const cleanup = await TrackerPlugin.setup(context as never);
     const warnings: string[] = [];
@@ -180,7 +206,15 @@ describe("authoritative attribution transitions", () => {
         { beadID: "bead-fail" },
         { sessionID: "root", toolCallID: "closeout-call" },
       );
-      expect(result.output).toEqual({ ok: true, changed: true });
+      const output = result.output as {
+        ok: boolean;
+        changed: boolean;
+        viewer: { url: string; browserOpened: boolean };
+      };
+      expect(output.ok).toBe(true);
+      expect(output.changed).toBe(true);
+      expect(output.viewer.browserOpened).toBe(false);
+      expect((await fetch(output.viewer.url)).status).toBe(200);
       expect(warnings.join(" ")).toContain(
         "closeout report regeneration failed; delivery continues",
       );
