@@ -175,12 +175,22 @@ bun run format
 bun run format:check
 bun run lint
 bun run typecheck
-bun test tests/foundation.test.ts
+bun test tests/tracking/store-schema.test.ts
 ```
+
+Tests are grouped by the public behavior boundary they exercise:
+
+- `tests/public/` protects both package entry points and the complete export surface;
+- `tests/tracking/` covers the real temporary SQLite store, schema, lifecycle, attribution, and retention;
+- `tests/attribution/`, `tests/reporting/`, and `tests/runtime/` isolate their respective validator, report, and plugin behaviors;
+- `tests/integration/simulation.test.ts` remains the deterministic end-to-end seam;
+- `tests/support/` contains only the shared temporary-store and fake-`wbd` infrastructure.
+
+The integration simulation injects authoritative validation and fixed timestamps. Runtime tests that exercise executable discovery use the injected fake executable, while viewer tests use real IPv4 loopback HTTP. No test contacts a live Hub.
 
 ## Deterministic simulations
 
-`tests/simulation.test.ts` is the end-to-end validation seam. It uses fixed
+`tests/integration/simulation.test.ts` is the end-to-end validation seam. It uses fixed
 timestamps and injected authoritative validators, so it does not query live
 Hub state or depend on a running orchestration environment. The six scenarios
 cover:
@@ -203,5 +213,5 @@ cover:
 Run the focused simulation and affected source tests with:
 
 ```sh
-bun test tests/simulation.test.ts tests/foundation.test.ts tests/attribution.test.ts tests/launch-retention.test.ts tests/report.test.ts
+bun test tests/integration/simulation.test.ts tests/tracking/store-schema.test.ts tests/attribution/authoritative-bead.test.ts tests/attribution/transitions.test.ts tests/tracking/retention.test.ts tests/runtime/launch.test.ts tests/reporting/build.test.ts tests/reporting/markdown.test.ts
 ```

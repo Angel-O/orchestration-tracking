@@ -1,11 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { fakeWbd } from "../support/fake-wbd.js";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { parseOptions } from "../src/config/options.js";
-import { TrackerPlugin } from "../src/plugin.js";
-import { TrackerStore } from "../src/store.js";
-import type { ReportViewerOptions } from "../src/report-viewer.js";
+import { parseOptions } from "../../src/config/options.js";
+import { TrackerPlugin } from "../../src/plugin.js";
+import { TrackerStore } from "../../src/store.js";
+import type { ReportViewerOptions } from "../../src/report-viewer.js";
 
 type ReportTool = {
   readonly name: string;
@@ -55,6 +56,203 @@ async function setupReportTool(
   return { tools, cleanup: await TrackerPlugin.setup(context as never) };
 }
 
+function reportTool(tools: readonly ReportTool[]): NonNullable<ReportTool["execute"]> {
+  const tool = tools.find((candidate) => candidate.name === "tracking_report");
+  if (!tool?.execute) throw new Error("report tool was not registered");
+  return tool.execute;
+}
+
+test("registers only the approved tracker tool surface", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tracker-tools-"));
+  const registered: { name: string }[] = [];
+  const context = {
+    options: { dataDir: directory },
+    session: {
+      hook: async () => ({ dispose: async () => undefined }),
+      get: async () => ({ id: "root", parentID: undefined, agent: "orchestrator" }),
+    },
+    tool: {
+      transform: async (callback: (tools: { add: (tool: { name: string }) => void }) => void) => {
+        callback({ add: (tool) => registered.push(tool) });
+        return { dispose: async () => undefined };
+      },
+    },
+    event: {
+      subscribe: async function* () {
+        /* No lifecycle events in this registration test. */
+      },
+    },
+  };
+  const cleanup = await TrackerPlugin.setup(context as never);
+  expect(registered.map((tool) => tool.name)).toEqual([
+    "tracking_bead_created",
+    "tracking_bead_select",
+    "tracking_closeout",
+    "tracking_report",
+  ]);
+  if (typeof cleanup === "function") await cleanup();
+  rmSync(directory, { recursive: true, force: true });
+});
+test("regenerates reports through the real closeout tool path", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tracker-closeout-report-"));
+  fakeWbd(directory, '{"id":"bead-close","issue_type":"task"}');
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${directory}:${originalPath ?? ""}`;
+  let promptHook:
+    | ((event: { readonly sessionID: string; readonly messageID: string }) => Promise<void>)
+    | undefined;
+  const registered: Array<{
+    readonly name: string;
+    readonly execute?: (args: unknown, context: unknown) => Promise<{ output: unknown }>;
+  }> = [];
+  const context = {
+    options: { dataDir: directory },
+    session: {
+      hook: async (
+        _name: string,
+        callback: (event: { sessionID: string; messageID: string }) => Promise<void>,
+      ) => {
+        promptHook = callback;
+        return { dispose: async () => undefined };
+      },
+      get: async () => ({ id: "root", parentID: undefined, agent: "orchestrator" }),
+    },
+    tool: {
+      transform: async (
+        callback: (tools: { add: (tool: (typeof registered)[number]) => void }) => void,
+      ) => {
+        callback({ add: (tool) => registered.push(tool) });
+        return { dispose: async () => undefined };
+      },
+    },
+    event: { subscribe: async function* () {} },
+    reportViewerOptions: { launch: () => false },
+  };
+  const cleanup = await TrackerPlugin.setup(context as never);
+  try {
+    if (!promptHook) throw new Error("prompt hook was not registered");
+    await promptHook({ sessionID: "root", messageID: "message-1" });
+    const closeout = registered.find((tool) => tool.name === "tracking_closeout");
+    if (!closeout?.execute) throw new Error("closeout tool was not registered");
+    const result = await closeout.execute(
+      { beadID: "bead-close" },
+      { sessionID: "root", toolCallID: "closeout-call" },
+    );
+    const firstOutput = result.output as {
+      ok: boolean;
+      changed: boolean;
+      viewer: { url: string; expiresAt: number; browserOpened: boolean };
+    };
+    expect(firstOutput.ok).toBe(true);
+    expect(firstOutput.changed).toBe(true);
+    expect(firstOutput.viewer.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/report\//u);
+    expect(typeof firstOutput.viewer.expiresAt).toBe("number");
+    expect(firstOutput.viewer.browserOpened).toBe(false);
+    const viewerURL = firstOutput.viewer.url;
+    expect(await (await fetch(viewerURL)).text()).toContain("bead-close");
+    const replay = await closeout.execute(
+      { beadID: "bead-close" },
+      { sessionID: "root", toolCallID: "closeout-replay" },
+    );
+    const replayOutput = replay.output as {
+      ok: boolean;
+      changed: boolean;
+      viewer: { url: string; browserOpened: boolean };
+    };
+    expect(replayOutput.ok).toBe(true);
+    expect(replayOutput.changed).toBe(false);
+    expect(replayOutput.viewer.browserOpened).toBe(false);
+    expect(await (await fetch(replayOutput.viewer.url)).text()).toContain("bead-close");
+    expect(existsSync(join(directory, "reports"))).toBe(true);
+    const files = readdirSync(join(directory, "reports"));
+    expect(files).toHaveLength(2);
+    expect(files.some((file) => file.endsWith(".json"))).toBe(true);
+    expect(files.some((file) => file.endsWith(".md"))).toBe(true);
+  } finally {
+    process.env.PATH = originalPath;
+    if (typeof cleanup === "function") cleanup();
+    const store = TrackerStore.open(parseOptions({ dataDir: directory }));
+    expect(store.listCloseouts().map(({ beadID, kind }) => [beadID, kind])).toEqual([
+      ["bead-close", "concrete"],
+    ]);
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test("continues delivery when closeout report regeneration fails", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tracker-closeout-report-failure-"));
+  fakeWbd(directory, '{"id":"bead-fail","issue_type":"task"}');
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${directory}:${originalPath ?? ""}`;
+  let promptHook:
+    | ((event: { readonly sessionID: string; readonly messageID: string }) => Promise<void>)
+    | undefined;
+  const registered: Array<{
+    readonly name: string;
+    readonly execute?: (args: unknown, context: unknown) => Promise<{ output: unknown }>;
+  }> = [];
+  const context = {
+    options: { dataDir: directory },
+    session: {
+      hook: async (
+        _name: string,
+        callback: (event: { sessionID: string; messageID: string }) => Promise<void>,
+      ) => {
+        promptHook = callback;
+        return { dispose: async () => undefined };
+      },
+      get: async () => ({ id: "root", parentID: undefined, agent: "orchestrator" }),
+    },
+    tool: {
+      transform: async (
+        callback: (tools: { add: (tool: (typeof registered)[number]) => void }) => void,
+      ) => {
+        callback({ add: (tool) => registered.push(tool) });
+        return { dispose: async () => undefined };
+      },
+    },
+    event: { subscribe: async function* () {} },
+    reportViewerOptions: { launch: () => false },
+  };
+  const cleanup = await TrackerPlugin.setup(context as never);
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+  try {
+    if (!promptHook) throw new Error("prompt hook was not registered");
+    await promptHook({ sessionID: "root", messageID: "message-1" });
+    writeFileSync(join(directory, "reports"), "not-a-directory");
+    const closeout = registered.find((tool) => tool.name === "tracking_closeout");
+    if (!closeout?.execute) throw new Error("closeout tool was not registered");
+    const result = await closeout.execute(
+      { beadID: "bead-fail" },
+      { sessionID: "root", toolCallID: "closeout-call" },
+    );
+    const output = result.output as {
+      ok: boolean;
+      changed: boolean;
+      viewer: { url: string; browserOpened: boolean };
+    };
+    expect(output.ok).toBe(true);
+    expect(output.changed).toBe(true);
+    expect(output.viewer.browserOpened).toBe(false);
+    expect((await fetch(output.viewer.url)).status).toBe(200);
+    expect(warnings.join(" ")).toContain("closeout report regeneration failed; delivery continues");
+    expect(warnings.join(" ")).not.toContain("bead-fail");
+    expect(warnings.join(" ")).not.toContain(directory);
+  } finally {
+    console.warn = originalWarn;
+    process.env.PATH = originalPath;
+    if (typeof cleanup === "function") cleanup();
+    const store = TrackerStore.open(parseOptions({ dataDir: directory }));
+    expect(store.listCloseouts().map(({ beadID, kind }) => [beadID, kind])).toEqual([
+      ["bead-fail", "concrete"],
+    ]);
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("disposal overlaps browser launch without registering a late viewer", async () => {
   const directory = mkdtempSync(join(tmpdir(), "tracker-report-tool-overlap-"));
   let started!: () => void;
@@ -96,12 +294,6 @@ test("disposal overlaps browser launch without registering a late viewer", async
     rmSync(directory, { recursive: true, force: true });
   }
 });
-
-function reportTool(tools: readonly ReportTool[]): NonNullable<ReportTool["execute"]> {
-  const tool = tools.find((candidate) => candidate.name === "tracking_report");
-  if (!tool?.execute) throw new Error("report tool was not registered");
-  return tool.execute;
-}
 
 test("tracking_report selects standalone, child, epic, and intersecting session/time reports", async () => {
   const directory = mkdtempSync(join(tmpdir(), "tracker-report-tool-"));

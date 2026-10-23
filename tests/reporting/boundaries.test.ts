@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "bun:test";
 
-const reportingDirectory = join(dirname(fileURLToPath(import.meta.url)), "../src/reporting");
+const reportingDirectory = join(dirname(fileURLToPath(import.meta.url)), "../../src/reporting");
 
 test("pure reporting modules do not acquire effect dependencies", () => {
   for (const file of ["models.ts", "build.ts", "markdown.ts", "html.ts"]) {

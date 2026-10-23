@@ -1,20 +1,14 @@
+import { disposeTrackerFixture, trackerFixture as fixture } from "../support/tracker-fixture.js";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { parseOptions } from "../src/config/options.js";
 import {
   createReportViewer,
   launchReportViewerBrowser,
   REPORT_VIEWER_LIFETIME_MS,
   type ReportViewer,
-} from "../src/report-viewer.js";
-import { TrackerStore } from "../src/store.js";
-
-function fixture(): { directory: string; store: TrackerStore } {
-  const directory = mkdtempSync(join(tmpdir(), "tracker-viewer-"));
-  return { directory, store: TrackerStore.open(parseOptions({ dataDir: directory })) };
-}
+} from "../../src/report-viewer.js";
 
 async function response(
   viewer: ReportViewer,
@@ -32,11 +26,6 @@ async function closedRequest(viewer: ReportViewer): Promise<boolean> {
   } catch {
     return true;
   }
-}
-
-function cleanup(directory: string, store: TrackerStore): void {
-  store.close();
-  rmSync(directory, { recursive: true, force: true });
 }
 
 function expectViewerHeaders(result: Response): void {
@@ -89,7 +78,7 @@ test("serves only the exact loopback token route with dynamic, protected HTML", 
     expect((await response(viewer, "GET", viewer.url, { host: "example.test" })).status).toBe(404);
   } finally {
     viewer?.dispose();
-    cleanup(directory, store);
+    disposeTrackerFixture({ directory, store });
   }
 });
 
@@ -111,7 +100,7 @@ test("freezes the selected scope and isolates browser-launch failure", async () 
     expect((await (await response(viewer)).text()).includes("session-a")).toBe(true);
   } finally {
     viewer?.dispose();
-    cleanup(directory, store);
+    disposeTrackerFixture({ directory, store });
   }
 });
 
@@ -139,7 +128,7 @@ test("applies viewer headers to rejected and rendering-failure responses", async
     expect(await renderingFailure.text()).toBe("");
   } finally {
     viewer?.dispose();
-    if (!storeClosed) cleanup(directory, store);
+    if (!storeClosed) disposeTrackerFixture({ directory, store });
     else rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -175,7 +164,7 @@ test("reports browser success and closes at the fixed non-extending expiry", asy
     viewer.dispose();
   } finally {
     viewer?.dispose();
-    cleanup(directory, store);
+    disposeTrackerFixture({ directory, store });
   }
 });
 

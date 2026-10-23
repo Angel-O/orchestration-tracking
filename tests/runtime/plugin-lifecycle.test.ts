@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import * as facade from "../src/plugin.js";
-import * as runtime from "../src/runtime/plugin.js";
-import { LAUNCH_METADATA_KEY as runtimeLaunchKey } from "../src/runtime/launch.js";
+import * as facade from "../../src/plugin.js";
+import * as runtime from "../../src/runtime/plugin.js";
+import { LAUNCH_METADATA_KEY as runtimeLaunchKey } from "../../src/runtime/launch.js";
 
 test("plugin facade preserves runtime identity and launch metadata contract", () => {
   expect(facade.TrackerPlugin).toBe(runtime.TrackerPlugin);
