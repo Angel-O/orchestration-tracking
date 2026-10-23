@@ -135,8 +135,8 @@ export interface ReportDocument {
   readonly children?: readonly ChildSummary[];
 }
 
-/** One captured phase bucket for the legacy detail renderer. */
-export interface LegacyPhaseTotal {
+/** One captured phase bucket for the report-detail renderer. */
+export interface ReportDetailPhaseTotal {
   readonly phaseKey: string;
   readonly phaseLabel: string;
   readonly color: string;
@@ -144,14 +144,14 @@ export interface LegacyPhaseTotal {
   readonly passCount: number;
 }
 
-/** One observed-agent bucket for the legacy detail renderer. */
-export interface LegacyAgentTotal {
+/** One observed-agent bucket for the report-detail renderer. */
+export interface ReportDetailAgentTotal {
   readonly agent: string;
   readonly activeMs: number;
   readonly passCount: number;
 }
 
-export interface LegacySessionTotal {
+export interface ReportDetailSessionTotal {
   readonly sessionID: string;
   readonly projectLabel: string;
   readonly activeMs: number;
@@ -159,7 +159,7 @@ export interface LegacySessionTotal {
   readonly outcomes: OutcomeCounts;
 }
 
-export interface LegacyTimelineSegment {
+export interface ReportDetailTimelineSegment {
   readonly sliceID: number;
   readonly startedAt: number;
   readonly endedAt: number | null;
@@ -170,7 +170,7 @@ export interface LegacyTimelineSegment {
   readonly widthPercent: number;
 }
 
-export interface LegacyPass {
+export interface ReportDetailPass {
   readonly passNumber: number;
   readonly sessionID: string;
   readonly actionID: string;
@@ -182,10 +182,10 @@ export interface LegacyPass {
   readonly startedAt: number;
   readonly endedAt: number | null;
   readonly activeMs: number;
-  readonly segments: readonly LegacyTimelineSegment[];
+  readonly segments: readonly ReportDetailTimelineSegment[];
 }
 
-export interface LegacyRepeatSignal {
+export interface ReportDetailRepeatSignal {
   readonly sessionID: string;
   readonly agent: string;
   readonly phaseLabel: string;
@@ -197,10 +197,10 @@ export interface LegacyRepeatSignal {
 }
 
 /**
- * Internal, write-free detail projection. It is built beside ReportDocument
+ * Internal, write-free report-detail projection. It is built beside ReportDocument
  * so the HTML renderer never needs to reinterpret raw tracker facts.
  */
-export interface LegacyDetailModel {
+export interface ReportDetailModel {
   readonly kind: ReportKind;
   readonly beadID?: string;
   readonly status: LifecycleState;
@@ -217,16 +217,16 @@ export interface LegacyDetailModel {
     readonly activeMs: number;
     readonly elapsedMs: number;
   };
-  readonly phases: readonly LegacyPhaseTotal[];
-  readonly agents: readonly LegacyAgentTotal[];
-  readonly sessions: readonly LegacySessionTotal[];
-  readonly passes: readonly LegacyPass[];
+  readonly phases: readonly ReportDetailPhaseTotal[];
+  readonly agents: readonly ReportDetailAgentTotal[];
+  readonly sessions: readonly ReportDetailSessionTotal[];
+  readonly passes: readonly ReportDetailPass[];
   readonly scale: {
     readonly startAt: number | null;
     readonly endAt: number | null;
     readonly durationMs: number;
   };
-  readonly repeats: readonly LegacyRepeatSignal[];
+  readonly repeats: readonly ReportDetailRepeatSignal[];
   readonly incomplete: boolean;
   readonly unmapped: boolean;
   readonly warnings: readonly string[];
@@ -235,7 +235,7 @@ export interface LegacyDetailModel {
 export interface ReportModels {
   readonly selector: NormalizedSelector;
   readonly report: ReportDocument;
-  readonly legacyDetail: LegacyDetailModel;
+  readonly reportDetail: ReportDetailModel;
 }
 
 export interface ReportGenerationResult {
@@ -816,7 +816,7 @@ function writePrivateArtifact(reportDirectory: string, fileName: string, content
   return artifactPath;
 }
 
-const LEGACY_PHASE_COLORS = [
+const REPORT_DETAIL_PHASE_COLORS = [
   "#cfe8ff",
   "#d9f2d9",
   "#ffe4b5",
@@ -825,18 +825,18 @@ const LEGACY_PHASE_COLORS = [
   "#d8f3f0",
 ] as const;
 
-function legacyPhaseColor(phaseKey: string): string {
+function reportDetailPhaseColor(phaseKey: string): string {
   let hash = 0;
   for (const character of phaseKey) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  return LEGACY_PHASE_COLORS[(hash >>> 0) % LEGACY_PHASE_COLORS.length]!;
+  return REPORT_DETAIL_PHASE_COLORS[(hash >>> 0) % REPORT_DETAIL_PHASE_COLORS.length]!;
 }
 
-function legacyDetail(
+function buildReportDetail(
   entries: readonly Entry[],
   report: ReportDocument,
   closeouts: readonly CloseoutRecordView[],
   now: number,
-): LegacyDetailModel {
+): ReportDetailModel {
   const actionEntries = new Map<string, Entry[]>();
   for (const entry of entries) {
     const key = `${entry.action.sessionID}:${entry.action.actionID}`;
@@ -879,7 +879,7 @@ function legacyDetail(
     scaleStart === null || scaleEnd === null ? 0 : Math.max(0, scaleEnd - scaleStart);
   const percent = (value: number): number =>
     scaleDuration === 0 ? 0 : ((value - scaleStart!) / scaleDuration) * 100;
-  const timeline = (entry: Entry): LegacyTimelineSegment => {
+  const timeline = (entry: Entry): ReportDetailTimelineSegment => {
     const endedAt = entry.endedAt;
     const visibleEnd = endedAt ?? entry.startedAt;
     return {
@@ -892,24 +892,26 @@ function legacyDetail(
       widthPercent: Math.max(0, percent(visibleEnd) - percent(entry.startedAt)),
     };
   };
-  const legacyPasses: LegacyPass[] = passes.map(({ first, endAt, activeMs, segments }) => ({
-    passNumber: first.action.passNumber,
-    sessionID: first.action.sessionID,
-    actionID: first.action.actionID,
-    agent: first.action.observedRole,
-    phaseKey: first.action.phaseKey,
-    phaseLabel: first.action.phaseLabel,
-    color: legacyPhaseColor(first.action.phaseKey),
-    outcome: first.action.outcome,
-    startedAt: Math.min(...segments.map((entry) => entry.startedAt)),
-    endedAt: first.action.endedAt === null ? null : endAt,
-    activeMs,
-    segments: segments.map(timeline),
-  }));
+  const reportDetailPasses: ReportDetailPass[] = passes.map(
+    ({ first, endAt, activeMs, segments }) => ({
+      passNumber: first.action.passNumber,
+      sessionID: first.action.sessionID,
+      actionID: first.action.actionID,
+      agent: first.action.observedRole,
+      phaseKey: first.action.phaseKey,
+      phaseLabel: first.action.phaseLabel,
+      color: reportDetailPhaseColor(first.action.phaseKey),
+      outcome: first.action.outcome,
+      startedAt: Math.min(...segments.map((entry) => entry.startedAt)),
+      endedAt: first.action.endedAt === null ? null : endAt,
+      activeMs,
+      segments: segments.map(timeline),
+    }),
+  );
 
-  const phases = new Map<string, LegacyPhaseTotal>();
-  const agents = new Map<string, LegacyAgentTotal>();
-  const sessions = new Map<string, LegacySessionTotal>();
+  const phases = new Map<string, ReportDetailPhaseTotal>();
+  const agents = new Map<string, ReportDetailAgentTotal>();
+  const sessions = new Map<string, ReportDetailSessionTotal>();
   for (const pass of passes) {
     const first = pass.first;
     const phaseKey = first.action.phaseKey;
@@ -917,7 +919,7 @@ function legacyDetail(
     phases.set(phaseKey, {
       phaseKey,
       phaseLabel: first.action.phaseLabel,
-      color: legacyPhaseColor(phaseKey),
+      color: reportDetailPhaseColor(phaseKey),
       activeMs: (phase?.activeMs ?? 0) + pass.activeMs,
       passCount: (phase?.passCount ?? 0) + 1,
     });
@@ -948,7 +950,7 @@ function legacyDetail(
     group.push(pass.first.action.passNumber);
     repeatGroups.set(key, group);
   }
-  const repeats: LegacyRepeatSignal[] = [...repeatGroups.entries()]
+  const repeats: ReportDetailRepeatSignal[] = [...repeatGroups.entries()]
     .filter(([, passNumbers]) => passNumbers.length > 1)
     .map(([key, passNumbers]) => {
       const [sessionID, agent] = key.split("\u0000", 2) as [string, string];
@@ -1017,7 +1019,7 @@ function legacyDetail(
     sessions: [...sessions.values()].sort((left, right) =>
       left.sessionID.localeCompare(right.sessionID),
     ),
-    passes: legacyPasses,
+    passes: reportDetailPasses,
     scale: { startAt: scaleStart, endAt: scaleEnd, durationMs: scaleDuration },
     repeats,
     incomplete,
@@ -1190,7 +1192,7 @@ export function buildReportModels(
           })),
         }),
   };
-  const legacyEntries =
+  const reportDetailEntries =
     kind === "epic"
       ? [
           ...entries,
@@ -1199,7 +1201,11 @@ export function buildReportModels(
           ),
         ]
       : entries;
-  return { selector, report, legacyDetail: legacyDetail(legacyEntries, report, closeouts, now) };
+  return {
+    selector,
+    report,
+    reportDetail: buildReportDetail(reportDetailEntries, report, closeouts, now),
+  };
 }
 
 /** Classify local facts and atomically replace one private JSON artifact. */

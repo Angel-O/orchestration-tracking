@@ -1,8 +1,8 @@
 import type {
   ChildSummary,
-  LegacyDetailModel,
-  LegacyPass,
-  LegacySessionTotal,
+  ReportDetailModel,
+  ReportDetailPass,
+  ReportDetailSessionTotal,
   OutcomeCounts,
   ReportPhase,
 } from "./report.js";
@@ -74,7 +74,7 @@ function phaseSwatch(color: string): string {
   return `<span class="swatch" style="background:${escapeHtml(color)}" aria-hidden="true"></span>`;
 }
 
-function selection(detail: LegacyDetailModel): string {
+function selection(detail: ReportDetailModel): string {
   const parts = [
     detail.selection.bead === undefined ? "" : `bead: ${escapeHtml(detail.selection.bead)}`,
     detail.selection.sessions === undefined
@@ -88,7 +88,7 @@ function selection(detail: LegacyDetailModel): string {
   return parts.join("; ") || "all local activity";
 }
 
-function phaseLegend(detail: LegacyDetailModel): string {
+function phaseLegend(detail: ReportDetailModel): string {
   return detail.phases.length === 0
     ? "No phase segments"
     : detail.phases
@@ -99,7 +99,7 @@ function phaseLegend(detail: LegacyDetailModel): string {
         .join("");
 }
 
-function timelineSegments(pass: LegacyPass): string {
+function timelineSegments(pass: ReportDetailPass): string {
   return pass.segments
     .map(
       (segment) =>
@@ -108,7 +108,7 @@ function timelineSegments(pass: LegacyPass): string {
     .join("");
 }
 
-function bars(pass: LegacyPass, trackClass: string): string {
+function bars(pass: ReportDetailPass, trackClass: string): string {
   return `<div class="${trackClass}" aria-label="Timeline for pass ${escapeHtml(pass.passNumber)}">${timelineSegments(pass)}</div>`;
 }
 
@@ -125,7 +125,7 @@ function outcomeLabels(outcomes: OutcomeCounts): string {
   ).join("");
 }
 
-function phaseRows(detail: LegacyDetailModel): string {
+function phaseRows(detail: ReportDetailModel): string {
   if (detail.phases.length === 0) return '<tr><td colspan="4">None</td></tr>';
   return detail.phases
     .map((phase) => {
@@ -141,7 +141,7 @@ function phaseRows(detail: LegacyDetailModel): string {
     .join("");
 }
 
-function agentRows(detail: LegacyDetailModel): string {
+function agentRows(detail: ReportDetailModel): string {
   if (detail.agents.length === 0) return '<tr><td colspan="3">None</td></tr>';
   return detail.agents
     .map(
@@ -151,16 +151,16 @@ function agentRows(detail: LegacyDetailModel): string {
     .join("");
 }
 
-function sessionRows(detail: LegacyDetailModel): string {
+function sessionRows(detail: ReportDetailModel): string {
   if (detail.sessions.length === 0) return '<tr><td colspan="4">None</td></tr>';
   return detail.sessions
-    .map((session: LegacySessionTotal) => {
+    .map((session: ReportDetailSessionTotal) => {
       return `<tr><td>${escapeHtml(session.sessionID)}</td><td>${escapeHtml(session.passCount)}</td><td>${escapeHtml(formatDuration(session.activeMs))}</td><td>${outcomeLabels(session.outcomes)}</td></tr>`;
     })
     .join("");
 }
 
-function passRows(detail: LegacyDetailModel): string {
+function passRows(detail: ReportDetailModel): string {
   if (detail.passes.length === 0) return '<tr><td colspan="8">None</td></tr>';
   return detail.passes
     .map(
@@ -170,7 +170,7 @@ function passRows(detail: LegacyDetailModel): string {
     .join("");
 }
 
-function timelineRows(detail: LegacyDetailModel): string {
+function timelineRows(detail: ReportDetailModel): string {
   if (detail.passes.length === 0) return '<tr><td colspan="2">None</td></tr>';
   return detail.passes
     .map(
@@ -180,7 +180,7 @@ function timelineRows(detail: LegacyDetailModel): string {
     .join("");
 }
 
-function directPhaseRows(detail: LegacyDetailModel): string {
+function directPhaseRows(detail: ReportDetailModel): string {
   const rows = PHASES.filter((phase) => detail.phaseTotals[phase].actionCount > 0).map((phase) => {
     const metric = detail.phaseTotals[phase];
     return `<tr><td>${escapeHtml(PHASE_LABELS[phase])}</td><td>${escapeHtml(formatDuration(metric.activeMs))}</td><td>${escapeHtml(metric.actionCount)}</td></tr>`;
@@ -193,7 +193,7 @@ function childMetric(child: ChildSummary, phase: ReportPhase): string {
   return `${formatDuration(metric.activeMs)} (${metric.actionCount})`;
 }
 
-function childRows(detail: LegacyDetailModel): string {
+function childRows(detail: ReportDetailModel): string {
   const children = detail.children ?? [];
   if (children.length === 0) return '<tr><td colspan="10">None</td></tr>';
   return children
@@ -204,7 +204,7 @@ function childRows(detail: LegacyDetailModel): string {
     .join("");
 }
 
-function repeatRows(detail: LegacyDetailModel): string {
+function repeatRows(detail: ReportDetailModel): string {
   if (detail.repeats.length === 0) return "<li>None</li>";
   return detail.repeats
     .map(
@@ -214,8 +214,8 @@ function repeatRows(detail: LegacyDetailModel): string {
     .join("");
 }
 
-/** Render the supplied legacy-detail projection as self-contained HTML. */
-export function renderLegacyDetailHtml(detail: LegacyDetailModel): string {
+/** Render the supplied report-detail projection as self-contained HTML. */
+export function renderReportDetailHtml(detail: ReportDetailModel): string {
   const project =
     detail.projectLabel ??
     (detail.projectLabels.length > 0 ? detail.projectLabels.join(", ") : "—");

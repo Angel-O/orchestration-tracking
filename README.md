@@ -53,12 +53,12 @@ local Bead, sessions, and an optional time range. A Bead selector automatically
 produces a standalone, child, or epic initiative report. Epic reports expose
 direct metrics and child summaries, not child lanes or action rows.
 
-`renderLegacyDetailHtml(detail)` is the pure self-contained HTML renderer. Its
-input is exactly `buildReportModels(...).legacyDetail`; it does not select,
+`renderReportDetailHtml(detail)` is the pure self-contained HTML renderer. Its
+input is exactly `buildReportModels(...).reportDetail`; it does not select,
 rebuild, or read tracker facts. The output uses inline CSS, escaped dynamic
 values, and no scripts, links, fonts, or network assets. Epic detail retains
 direct metrics and child summaries from that model while showing the captured
-legacy pass and timeline projection.
+pass and timeline projection.
 
 `createReportViewer(store, selector)` is the narrow browser-delivery boundary.
 It freezes the normalized selector, listens on an IPv4 loopback random port,

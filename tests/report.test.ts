@@ -152,7 +152,7 @@ test("classifies fixed phases and separates direct, child, active, and elapsed m
       ["child-1", 300],
     ]);
     const epicModels = buildReportModels(store.readReportSnapshot(), { bead: "epic-1" }, 500);
-    expect(epicModels.legacyDetail.passes.map((pass) => pass.actionID)).toEqual([
+    expect(epicModels.reportDetail.passes.map((pass) => pass.actionID)).toEqual([
       "scope",
       "implement",
       "coordinate",
@@ -160,15 +160,15 @@ test("classifies fixed phases and separates direct, child, active, and elapsed m
       "unknown",
       "open",
     ]);
-    expect(epicModels.legacyDetail.durations.activeMs).toBe(450);
-    expect(epicModels.legacyDetail.metrics).toMatchObject({
+    expect(epicModels.reportDetail.durations.activeMs).toBe(450);
+    expect(epicModels.reportDetail.metrics).toMatchObject({
       directActiveMs: 150,
       summedChildActiveMs: 300,
       combinedActiveMs: 450,
     });
-    expect(epicModels.legacyDetail.phaseTotals.coordination.activeMs).toBe(50);
+    expect(epicModels.reportDetail.phaseTotals.coordination.activeMs).toBe(50);
     expect(
-      epicModels.legacyDetail.children?.map((child) => [child.beadID, child.metrics.activeMs]),
+      epicModels.reportDetail.children?.map((child) => [child.beadID, child.metrics.activeMs]),
     ).toEqual([["child-1", 300]]);
     expect(epic.actions).toBeUndefined();
     const epicView = renderReport(epic);
@@ -434,7 +434,7 @@ test("regenerates one stable private artifact atomically and excludes source con
   }
 });
 
-test("builds the current document and one clipped multi-segment legacy pass without writes", () => {
+test("builds the current document and one clipped multi-segment report-detail pass without writes", () => {
   const snapshot: ReportSnapshot = {
     sessions: [
       {
@@ -523,21 +523,21 @@ test("builds the current document and one clipped multi-segment legacy pass with
     selector: { bead: "bead-a", from: 15, to: 80 },
     metrics: { activeMs: 65, actionCount: 2 },
   });
-  expect(models.legacyDetail).toMatchObject({
+  expect(models.reportDetail).toMatchObject({
     status: "Active — closeout not observed",
     projectLabel: "project-a",
     selection: { bead: "bead-a", from: 15, to: 80 },
     durations: { activeMs: 65 },
     scale: { startAt: 15, endAt: 80, durationMs: 65 },
   });
-  expect(models.legacyDetail.passes).toHaveLength(2);
-  expect(models.legacyDetail.passes[0]).toMatchObject({
+  expect(models.reportDetail.passes).toHaveLength(2);
+  expect(models.reportDetail.passes[0]).toMatchObject({
     passNumber: 1,
     phaseKey: "implementation",
     color: "#cfe8ff",
     activeMs: 45,
   });
-  expect(models.legacyDetail.passes[0]?.segments).toEqual([
+  expect(models.reportDetail.passes[0]?.segments).toEqual([
     {
       sliceID: 1,
       startedAt: 15,
@@ -557,7 +557,7 @@ test("builds the current document and one clipped multi-segment legacy pass with
       widthPercent: 100 - (25 / 65) * 100,
     },
   ]);
-  expect(models.legacyDetail.repeats).toEqual([
+  expect(models.reportDetail.repeats).toEqual([
     {
       sessionID: "session-a",
       agent: "worker",
@@ -591,7 +591,7 @@ test("the pure builder validates selector shape while preserving explicit empty 
   );
 });
 
-test("legacy warnings include incomplete/unmapped passes and exclude non-repeatable or single passes", () => {
+test("report-detail warnings include incomplete/unmapped passes and exclude non-repeatable or single passes", () => {
   const snapshot: ReportSnapshot = {
     sessions: [
       {
@@ -655,10 +655,10 @@ test("legacy warnings include incomplete/unmapped passes and exclude non-repeata
     closeouts: [],
     sourceHighWaterMark: 30,
   };
-  const legacy = buildReportModels(snapshot, {}, 40).legacyDetail;
-  expect(legacy.warnings).toContain("incomplete pass in session-a");
-  expect(legacy.warnings).toContain("unmapped agent in session-a");
-  expect(legacy.repeats).toEqual([]);
-  expect(legacy.incomplete).toBe(true);
-  expect(legacy.unmapped).toBe(true);
+  const reportDetail = buildReportModels(snapshot, {}, 40).reportDetail;
+  expect(reportDetail.warnings).toContain("incomplete pass in session-a");
+  expect(reportDetail.warnings).toContain("unmapped agent in session-a");
+  expect(reportDetail.repeats).toEqual([]);
+  expect(reportDetail.incomplete).toBe(true);
+  expect(reportDetail.unmapped).toBe(true);
 });

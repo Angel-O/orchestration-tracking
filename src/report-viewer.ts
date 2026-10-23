@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { buildReportModels, type ReportSelector } from "./report.js";
-import { renderLegacyDetailHtml } from "./report-html.js";
+import { renderReportDetailHtml } from "./report-html.js";
 import type { TrackerStore } from "./store.js";
 
 export const REPORT_VIEWER_LIFETIME_MS = 10 * 60 * 1000;
@@ -212,8 +212,8 @@ export async function createReportViewer(
     }
 
     try {
-      const detail = buildReportModels(store.readReportSnapshot(), selector, now()).legacyDetail;
-      const html = renderLegacyDetailHtml(detail);
+      const detail = buildReportModels(store.readReportSnapshot(), selector, now()).reportDetail;
+      const html = renderReportDetailHtml(detail);
       viewerHeaders(response);
       response.setHeader("Content-Length", Buffer.byteLength(html));
       response.end(request.method === "HEAD" ? undefined : html);

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { renderLegacyDetailHtml } from "../src/report-html.js";
-import type { LegacyDetailModel } from "../src/report.js";
+import { renderReportDetailHtml } from "../src/index.js";
+import type { ReportDetailModel } from "../src/report.js";
 
 const phaseTotals = {
   scoping: { activeMs: 0, actionCount: 0 },
@@ -30,7 +30,7 @@ const child = {
   },
 } as const;
 
-const detail: LegacyDetailModel = {
+const detail: ReportDetailModel = {
   kind: "epic",
   beadID: 'epic<&"',
   status: "Active — closeout not observed",
@@ -125,8 +125,8 @@ const detail: LegacyDetailModel = {
   warnings: ["warning <&"],
 };
 
-test("renders legacy detail as escaped, self-contained HTML with truthful bars", () => {
-  const html = renderLegacyDetailHtml(detail);
+test("renders report detail as escaped, self-contained HTML with truthful bars", () => {
+  const html = renderReportDetailHtml(detail);
   const passCellStart = html.indexOf('class="pass-track"');
   const passCell = html.slice(passCellStart, html.indexOf("</td>", passCellStart));
   const directTotalsStart = html.indexOf("<h2>Direct phase totals</h2>");
@@ -164,7 +164,7 @@ test("renders legacy detail as escaped, self-contained HTML with truthful bars",
 });
 
 test("keeps non-epic detail focused on its selected child projection", () => {
-  const html = renderLegacyDetailHtml({
+  const html = renderReportDetailHtml({
     ...detail,
     kind: "child",
     beadID: "child-1",
