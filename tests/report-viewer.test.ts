@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { parseOptions } from "../src/options.js";
 import {
   createReportViewer,
+  launchReportViewerBrowser,
   REPORT_VIEWER_LIFETIME_MS,
   type ReportViewer,
 } from "../src/report-viewer.js";
@@ -175,5 +176,24 @@ test("reports browser success and closes at the fixed non-extending expiry", asy
   } finally {
     viewer?.dispose();
     cleanup(directory, store);
+  }
+});
+
+test("reports native opener failure when it exits nonzero after spawning", async () => {
+  if (process.platform === "win32") return;
+
+  const directory = mkdtempSync(join(tmpdir(), "tracker-native-opener-"));
+  const command = process.platform === "darwin" ? "open" : "xdg-open";
+  const opener = join(directory, command);
+  const originalPath = process.env.PATH;
+  writeFileSync(opener, "#!/bin/sh\nexit 17\n");
+  chmodSync(opener, 0o755);
+  process.env.PATH = `${directory}:${originalPath ?? ""}`;
+  try {
+    expect(await launchReportViewerBrowser("http://127.0.0.1:1/report/test")).toBe(false);
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    rmSync(directory, { recursive: true, force: true });
   }
 });

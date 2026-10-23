@@ -44,7 +44,7 @@ function browserCommand(): { command: string; args: readonly string[] } {
   return { command: "xdg-open", args: [] };
 }
 
-/** Best effort only: argv is passed directly and the viewer remains usable on failure. */
+/** Best effort only: argv is passed directly and success requires clean opener exit. */
 export const launchReportViewerBrowser: ReportViewerLauncher = (url) => {
   const { command, args } = browserCommand();
   return new Promise<boolean>((resolve) => {
@@ -58,8 +58,8 @@ export const launchReportViewerBrowser: ReportViewerLauncher = (url) => {
       const child = spawn(command, [...args, url], { detached: true, stdio: "ignore" });
       child.once("spawn", () => {
         child.unref();
-        finish(true);
       });
+      child.once("close", (code) => finish(code === 0));
       child.once("error", () => finish(false));
     } catch {
       finish(false);
