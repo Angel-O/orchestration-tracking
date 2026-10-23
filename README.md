@@ -121,14 +121,6 @@ validated concrete or epic closeout. Concrete closeout resets only the invoking
 session when it is currently associated with that exact Bead; epic closeout
 does not alter child workstreams.
 
-`src/hub.ts` was removed in Wave 2 after the pre-change deletion check found
-no source, test, package-export, or runtime-discovery reference to it (this
-note is the intentional documentation record of that decision).
-Its topology-array helper had no caller or public export; the supported
-validator and transition tests cover the required single-record and direct-
-parent behavior. Its unused 5-second/256 KiB command bounds were not part of
-the supported attribution path; the preserved path remains 2 seconds/64 KiB.
-
 ## Launch and retention contract
 
 The plugin checks the exact-session metadata key
@@ -166,6 +158,9 @@ opening another store instance does not recover anything. Observation
 failures are content-free diagnostics and do not block OpenCode delivery.
 
 ## Development
+
+Maintainer-facing package boundaries are documented in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ```sh
 bun install --frozen-lockfile
