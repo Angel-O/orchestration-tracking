@@ -8,7 +8,7 @@ export {
   type PhaseMapping,
   type PhaseMappings,
   type TrackerOptions,
-} from "./options.js";
+} from "./config/options.js";
 export {
   DATABASE_FILENAME,
   RETENTION_CLEANUP_BATCH_SIZE,
@@ -38,7 +38,7 @@ export {
 } from "./store.js";
 export { LAUNCH_METADATA_KEY } from "./plugin.js";
 export { sourceReleasePlan, type SourceReleasePlan } from "./release.js";
-export { validateBeadID, parseTimestamp } from "./validation.js";
+export { validateBeadID, parseTimestamp } from "./shared/validation.js";
 export {
   generateReport,
   buildReportModels,

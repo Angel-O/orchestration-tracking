@@ -5,7 +5,7 @@ import {
   validateAuthoritativeBead,
   type ValidatedBead,
 } from "./attribution.js";
-import { parseOptions } from "./options.js";
+import { parseOptions } from "./config/options.js";
 import { generateReport, type ReportGenerationResult, type ReportSelector } from "./report.js";
 import {
   createReportViewer,
@@ -14,7 +14,7 @@ import {
   type ReportViewerOptions,
 } from "./report-viewer.js";
 import { TrackerStore } from "./store.js";
-import { validateBeadID } from "./validation.js";
+import { validateBeadID } from "./shared/validation.js";
 
 const PLUGIN_ID = "orchestration-tracking";
 export const LAUNCH_METADATA_KEY = "orchestration-tracking.launch";

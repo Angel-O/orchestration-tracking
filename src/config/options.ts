@@ -1,6 +1,8 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
+/** Configuration parsing and phase defaults for the public plugin options. */
+
 export const SCHEMA_VERSION = 1 as const;
 
 export interface PhaseMapping {

@@ -1,8 +1,8 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { mappingFor, type TrackerOptions } from "./options.js";
-import { validateBeadID } from "./validation.js";
+import { mappingFor, type TrackerOptions } from "./config/options.js";
+import { validateBeadID } from "./shared/validation.js";
 
 /** The clean-break database deliberately does not reuse the previous tracker generation. */
 export const DATABASE_FILENAME = "tracker-v3.sqlite";

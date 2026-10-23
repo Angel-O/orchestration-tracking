@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { validateBeadID } from "./validation.js";
+import { validateBeadID } from "./shared/validation.js";
 import type {
   ActionOutcome,
   ActionRecord,

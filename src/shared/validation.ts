@@ -1,3 +1,5 @@
+/** Shared scalar validation; this module intentionally has no package dependencies. */
+
 /** Bead IDs are path keys, never lossy filesystem names. */
 export function validateBeadID(value: unknown): string {
   if (

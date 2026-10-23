@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { BeadType } from "./store.js";
-import { validateBeadID } from "./validation.js";
+import { validateBeadID } from "./shared/validation.js";
 
 const execFileAsync = promisify(execFile);
 const HUB_TIMEOUT_MS = 5_000;

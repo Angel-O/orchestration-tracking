@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { parseOptions } from "../src/options.js";
+import { parseOptions } from "../src/config/options.js";
 import { TrackerPlugin } from "../src/plugin.js";
 import { DATABASE_FILENAME, TrackerStore } from "../src/store.js";
 

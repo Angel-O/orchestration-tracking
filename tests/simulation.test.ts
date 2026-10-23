@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { AttributionTransitions, type ValidatedBead } from "../src/attribution.js";
-import { parseOptions } from "../src/options.js";
+import { parseOptions } from "../src/config/options.js";
 import { generateReport } from "../src/report.js";
 import { LAUNCH_METADATA_KEY, TrackerPlugin } from "../src/plugin.js";
 import { TrackerStore, UNASSIGNED_RETENTION_MS } from "../src/store.js";

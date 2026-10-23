@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { parseOptions } from "../src/options.js";
+import { parseOptions } from "../src/config/options.js";
 import { LAUNCH_METADATA_KEY, TrackerPlugin } from "../src/plugin.js";
 import { TrackerStore, UNASSIGNED_RETENTION_MS } from "../src/store.js";
 

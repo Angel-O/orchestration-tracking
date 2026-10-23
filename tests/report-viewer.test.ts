@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { parseOptions } from "../src/options.js";
+import { parseOptions } from "../src/config/options.js";
 import {
   createReportViewer,
   launchReportViewerBrowser,

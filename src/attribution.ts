@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import type { TrackerStore, BeadType } from "./store.js";
-import { validateBeadID } from "./validation.js";
+import { validateBeadID } from "./shared/validation.js";
 
 const MAX_WBD_OUTPUT = 64 * 1024;
 const WBD_TIMEOUT_MS = 2_000;

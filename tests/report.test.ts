@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { parseOptions } from "../src/options.js";
+import { parseOptions } from "../src/config/options.js";
 import { buildReportModels, generateReport, renderReport } from "../src/report.js";
 import { TrackerStore, type ReportSnapshot } from "../src/store.js";
 

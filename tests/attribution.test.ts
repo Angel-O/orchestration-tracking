@@ -7,7 +7,7 @@ import {
   validateAuthoritativeBead,
   type WbdShowRunner,
 } from "../src/attribution.js";
-import { parseOptions } from "../src/options.js";
+import { parseOptions } from "../src/config/options.js";
 import { TrackerPlugin } from "../src/plugin.js";
 import { generateReport } from "../src/report.js";
 import { TrackerStore } from "../src/store.js";
