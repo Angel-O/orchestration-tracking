@@ -1,7 +1,10 @@
 import { disposeTrackerFixture, trackerFixture as fixture } from "../support/tracker-fixture.js";
 import { expect, test } from "bun:test";
-import { buildReportModels, generateReport, renderReport } from "../../src/report.js";
-import { TrackerStore, type ReportSnapshot } from "../../src/store.js";
+import { buildReportModels } from "../../src/reporting/build.js";
+import { generateReport } from "../../src/reporting/artifacts.js";
+import { renderReport } from "../../src/reporting/markdown.js";
+import { TrackerStore } from "../../src/tracking/store.js";
+import type { ReportSnapshot } from "../../src/tracking/models.js";
 
 function emptySnapshot(): ReportSnapshot {
   return {

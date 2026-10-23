@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseOptions } from "../../src/config/options.js";
-import { TrackerStore } from "../../src/store.js";
+import { TrackerStore } from "../../src/tracking/store.js";
 
 export type TrackerFixture = {
   readonly directory: string;

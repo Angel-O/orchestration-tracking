@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { parseOptions } from "../../src/config/options.js";
 import { TrackerPlugin } from "../../src/plugin.js";
-import { TrackerStore } from "../../src/store.js";
-import type { ReportViewerOptions } from "../../src/report-viewer.js";
+import { TrackerStore } from "../../src/tracking/store.js";
+import type { ReportViewerOptions } from "../../src/reporting/viewer.js";
 
 type ReportTool = {
   readonly name: string;

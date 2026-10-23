@@ -1,11 +1,11 @@
 import { disposeTrackerFixture, trackerFixture as fixture } from "../support/tracker-fixture.js";
 import { expect, test } from "bun:test";
+import { AttributionTransitions } from "../../src/attribution/transitions.js";
 import {
-  AttributionTransitions,
   validateAuthoritativeBead,
   type WbdShowRunner,
-} from "../../src/attribution.js";
-import { generateReport } from "../../src/report.js";
+} from "../../src/attribution/authoritative-bead.js";
+import { generateReport } from "../../src/reporting/artifacts.js";
 
 function runner(records: Record<string, unknown>[]): {
   run: WbdShowRunner;

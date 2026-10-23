@@ -1,6 +1,7 @@
 import { AttributionTransitions } from "../attribution/transitions.js";
-import { generateReport, type ReportGenerationResult, type ReportSelector } from "../report.js";
-import { type ReportViewerMetadata } from "../report-viewer.js";
+import { generateReport } from "../reporting/artifacts.js";
+import type { ReportGenerationResult, ReportSelector } from "../reporting/models.js";
+import type { ReportViewerMetadata } from "../reporting/viewer.js";
 import { TrackerStore } from "../tracking/store.js";
 import { validateBeadID } from "../shared/validation.js";
 

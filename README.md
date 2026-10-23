@@ -65,9 +65,8 @@ contains value shapes and policy constants, `build.ts` makes the snapshot-only
 projections, `markdown.ts` and `html.ts` render those values, and
 `artifacts.ts` owns filesystem writes and report metadata persistence.
 `viewer.ts` is the only reporting module that serves network responses or
-launches a browser. `src/report.ts`, `src/report-html.ts`, and
-`src/report-viewer.ts` remain compatibility facades for the previous internal
-paths; the package root continues to expose the same report API.
+launches a browser. The package root continues to expose the same report API
+through these owning modules.
 
 `createReportViewer(store, selector)` is the narrow browser-delivery boundary.
 It freezes the normalized selector, listens on an IPv4 loopback random port,
@@ -101,9 +100,8 @@ raw-fact high-water mark from the same consistent snapshot used to build them.
 ## Attribution transitions
 
 The bounded authoritative validator lives in `src/attribution/authoritative-bead.ts`,
-and mutation behavior lives in `src/attribution/transitions.ts`. `src/attribution.ts`
-remains a compatibility facade, so the existing root exports and internal imports
-keep their identity and error behavior.
+and mutation behavior lives in `src/attribution/transitions.ts`. The existing root
+exports retain their identity and error behavior.
 
 The tracker exposes three mutation tools: `tracking_bead_created`,
 `tracking_bead_select`, and `tracking_closeout`. Each accepts only `{ beadID }`;

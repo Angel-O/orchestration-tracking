@@ -10,39 +10,41 @@ export {
   type TrackerOptions,
 } from "./config/options.js";
 export {
-  DATABASE_FILENAME,
   RETENTION_CLEANUP_BATCH_SIZE,
   TrackerStore,
   UNASSIGNED_RETENTION_MS,
-  type ActionEnd,
-  type ActionOutcome,
-  type ActionRecord,
-  type ActionStart,
-  type ActivitySliceRecord,
-  type AssociationReceiptRecord,
-  type AssociationRecord,
-  type AssociationSource,
-  type BeadRecord,
-  type BeadType,
-  type CloseoutRecord,
-  type CloseoutRecordView,
-  type LifecycleReceipt,
-  type LifecycleReceiptRecord,
-  type ReportMetadata,
-  type ReportMetadataRecord,
-  type ReportSnapshot,
-  type RetentionCleanupResult,
-  type SessionObservation,
-  type SessionRecord,
-  type TopologyRecord,
-} from "./store.js";
+} from "./tracking/store.js";
+export { DATABASE_FILENAME } from "./tracking/schema.js";
+export type {
+  ActionEnd,
+  ActionOutcome,
+  ActionRecord,
+  ActionStart,
+  ActivitySliceRecord,
+  AssociationReceiptRecord,
+  AssociationRecord,
+  AssociationSource,
+  BeadRecord,
+  BeadType,
+  CloseoutRecord,
+  CloseoutRecordView,
+  LifecycleReceipt,
+  LifecycleReceiptRecord,
+  ReportMetadata,
+  ReportMetadataRecord,
+  ReportSnapshot,
+  RetentionCleanupResult,
+  SessionObservation,
+  SessionRecord,
+  TopologyRecord,
+} from "./tracking/models.js";
 export { LAUNCH_METADATA_KEY } from "./plugin.js";
-export { sourceReleasePlan, type SourceReleasePlan } from "./release.js";
+export { sourceReleasePlan, type SourceReleasePlan } from "./release/source-release.js";
 export { validateBeadID, parseTimestamp } from "./shared/validation.js";
+export { buildReportModels } from "./reporting/build.js";
+export { generateReport } from "./reporting/artifacts.js";
+export { renderReport } from "./reporting/markdown.js";
 export {
-  generateReport,
-  buildReportModels,
-  renderReport,
   PRIVACY_NOTICE,
   REPORT_NOTICES,
   REPORTING_POLICY_VERSION,
@@ -69,8 +71,8 @@ export {
   type ReportPhase,
   type ReportSelector,
   type ReportSession,
-} from "./report.js";
-export { renderReportDetailHtml } from "./report-html.js";
+} from "./reporting/models.js";
+export { renderReportDetailHtml } from "./reporting/html.js";
 export {
   createReportViewer,
   launchReportViewerBrowser,
@@ -79,13 +81,15 @@ export {
   type ReportViewerLauncher,
   type ReportViewerMetadata,
   type ReportViewerOptions,
-} from "./report-viewer.js";
+} from "./reporting/viewer.js";
 export {
-  AttributionTransitions,
-  runWbdShow,
   validateAuthoritativeBead,
-  type TransitionContext,
-  type TransitionResult,
+  runWbdShow,
   type ValidatedBead,
   type WbdShowRunner,
-} from "./attribution.js";
+} from "./attribution/authoritative-bead.js";
+export {
+  AttributionTransitions,
+  type TransitionContext,
+  type TransitionResult,
+} from "./attribution/transitions.js";

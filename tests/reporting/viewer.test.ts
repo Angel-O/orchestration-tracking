@@ -8,7 +8,7 @@ import {
   launchReportViewerBrowser,
   REPORT_VIEWER_LIFETIME_MS,
   type ReportViewer,
-} from "../../src/report-viewer.js";
+} from "../../src/reporting/viewer.js";
 
 async function response(
   viewer: ReportViewer,

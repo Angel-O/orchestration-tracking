@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderReportDetailHtml } from "../../src/index.js";
-import type { ReportDetailModel } from "../../src/report.js";
+import type { ReportDetailModel } from "../../src/reporting/models.js";
 
 const phaseTotals = {
   scoping: { activeMs: 0, actionCount: 0 },

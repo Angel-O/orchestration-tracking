@@ -3,13 +3,13 @@ import { basename } from "node:path";
 import { consumeLaunchDescriptor, type LaunchSession } from "./launch.js";
 import { registerTrackingTools } from "./tools.js";
 import { parseOptions } from "../config/options.js";
-import type { ReportSelector } from "../report.js";
+import type { ReportSelector } from "../reporting/models.js";
 import {
   createReportViewer,
   type ReportViewer,
   type ReportViewerMetadata,
   type ReportViewerOptions,
-} from "../report-viewer.js";
+} from "../reporting/viewer.js";
 import { TrackerStore } from "../tracking/store.js";
 
 const PLUGIN_ID = "orchestration-tracking";

@@ -572,7 +572,7 @@ function buildReportDetail(
 export function buildReportModels(
   snapshot: ReportSnapshot,
   input: ReportSelector = {},
-  generatedAt: number,
+  generatedAt = Date.now(),
 ): ReportModels {
   const now = timestamp(generatedAt, "generatedAt");
   const selector = normalizeSelector(input);

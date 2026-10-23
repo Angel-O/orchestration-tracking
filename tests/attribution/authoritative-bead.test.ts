@@ -1,12 +1,5 @@
 import { expect, test } from "bun:test";
-import { AttributionTransitions, validateAuthoritativeBead } from "../../src/attribution.js";
-import { validateAuthoritativeBead as directValidateAuthoritativeBead } from "../../src/attribution/authoritative-bead.js";
-import { AttributionTransitions as DirectAttributionTransitions } from "../../src/attribution/transitions.js";
-
-test("keeps the attribution facade mapped to the approved boundaries", () => {
-  expect(validateAuthoritativeBead).toBe(directValidateAuthoritativeBead);
-  expect(AttributionTransitions).toBe(DirectAttributionTransitions);
-});
+import { validateAuthoritativeBead } from "../../src/attribution/authoritative-bead.js";
 
 test("uses bounded argv validation and exact canonical matching", async () => {
   const calls: string[][] = [];

@@ -2,8 +2,9 @@ import { disposeTrackerFixture, trackerFixture as fixture } from "../support/tra
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { generateReport, renderReport } from "../../src/report.js";
-import { TrackerStore } from "../../src/store.js";
+import { generateReport } from "../../src/reporting/artifacts.js";
+import { renderReport } from "../../src/reporting/markdown.js";
+import { TrackerStore } from "../../src/tracking/store.js";
 
 function end(
   store: TrackerStore,
