@@ -640,7 +640,11 @@ export class TrackerStore {
     });
   }
 
-  /** Record a validated association and split all currently open actions at its receipt boundary. */
+  /**
+   * Record a validated association and split all currently open actions at its receipt boundary.
+   * Creation also backfills the uninterrupted, still-unassigned descendant tree observed before
+   * its receipt; later observations continue to use normal parent inheritance.
+   */
   recordAssociation(input: AssociationRecord): boolean {
     const receiptID = nonEmpty(input.receiptID, "receiptID");
     const sessionID = nonEmpty(input.sessionID, "sessionID");
@@ -677,44 +681,17 @@ export class TrackerStore {
         .query<ActionRow>("SELECT * FROM actions WHERE session_id = ? AND outcome = 'open'")
         .all(sessionID);
 
-      if (input.source === "creation") {
-        // Creation is the one approved exception to forward-only attribution:
-        // only this root's preceding unassigned slices become scoping.
-        this.db
-          .query(
-            "UPDATE activity_slices SET bead_id = ?, association_source = ? WHERE session_id = ? AND bead_id IS NULL AND started_at <= ?",
-          )
-          .run(beadID, input.source, sessionID, observedAt);
-      }
-      for (const action of actions) {
-        const currentSlice = this.db
-          .query<{ bead_id: string | null; started_at: number }>(
-            "SELECT bead_id, started_at FROM activity_slices WHERE session_id = ? AND action_id = ? AND ended_at IS NULL ORDER BY slice_id DESC LIMIT 1",
-          )
-          .get(sessionID, action.action_id);
-        if (
-          input.source === "creation" &&
-          currentSlice?.bead_id === beadID &&
-          currentSlice.started_at <= observedAt
-        )
-          continue;
-        const boundary = Math.max(observedAt, action.started_at, current?.changed_at ?? 0);
-        this.db
-          .query(
-            "UPDATE activity_slices SET ended_at = ? WHERE session_id = ? AND action_id = ? AND ended_at IS NULL",
-          )
-          .run(boundary, sessionID, action.action_id);
-        this.db
-          .query(
-            "INSERT INTO activity_slices (action_id, session_id, bead_id, association_source, started_at) VALUES (?, ?, ?, ?, ?)",
-          )
-          .run(action.action_id, sessionID, beadID, input.source, boundary);
-      }
-      this.db
-        .query(
-          "INSERT INTO session_attributions (session_id, bead_id, source, changed_at) VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET bead_id = excluded.bead_id, source = excluded.source, changed_at = MAX(session_attributions.changed_at, excluded.changed_at)",
-        )
-        .run(sessionID, beadID, input.source, observedAt);
+      this.associateSession(
+        sessionID,
+        beadID,
+        input.source,
+        observedAt,
+        current ?? undefined,
+        input.source === "creation",
+        actions,
+      );
+      if (input.source === "creation")
+        this.associatePreexistingDescendants(sessionID, beadID, observedAt, receiptID);
       return true;
     });
   }
@@ -1061,6 +1038,115 @@ export class TrackerStore {
         "INSERT OR IGNORE INTO session_attributions (session_id, bead_id, source, changed_at) VALUES (?, ?, 'inherited-lane', ?)",
       )
       .run(sessionID, parent.bead_id, observedAt);
+  }
+  private associateSession(
+    sessionID: string,
+    beadID: string,
+    source: AssociationSource,
+    observedAt: number,
+    current: { bead_id: string; source: AssociationSource; changed_at: number } | undefined,
+    backfill: boolean,
+    actions: readonly ActionRow[],
+  ): void {
+    if (backfill)
+      this.db
+        .query(
+          "UPDATE activity_slices SET bead_id = ?, association_source = ? WHERE session_id = ? AND bead_id IS NULL AND started_at <= ?",
+        )
+        .run(beadID, source, sessionID, observedAt);
+    for (const action of actions) {
+      const currentSlice = this.db
+        .query<{ bead_id: string | null; started_at: number }>(
+          "SELECT bead_id, started_at FROM activity_slices WHERE session_id = ? AND action_id = ? AND ended_at IS NULL ORDER BY slice_id DESC LIMIT 1",
+        )
+        .get(sessionID, action.action_id);
+      if (backfill && currentSlice?.bead_id === beadID && currentSlice.started_at <= observedAt)
+        continue;
+      const boundary = Math.max(observedAt, action.started_at, current?.changed_at ?? 0);
+      this.db
+        .query(
+          "UPDATE activity_slices SET ended_at = ? WHERE session_id = ? AND action_id = ? AND ended_at IS NULL",
+        )
+        .run(boundary, sessionID, action.action_id);
+      this.db
+        .query(
+          "INSERT INTO activity_slices (action_id, session_id, bead_id, association_source, started_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(action.action_id, sessionID, beadID, source, boundary);
+    }
+    this.db
+      .query(
+        "INSERT INTO session_attributions (session_id, bead_id, source, changed_at) VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET bead_id = excluded.bead_id, source = excluded.source, changed_at = MAX(session_attributions.changed_at, excluded.changed_at)",
+      )
+      .run(sessionID, beadID, source, observedAt);
+  }
+  private associatePreexistingDescendants(
+    rootSessionID: string,
+    beadID: string,
+    observedAt: number,
+    rootReceiptID: string,
+  ): void {
+    const descendants = this.db
+      .query<{
+        session_id: string;
+        parent_session_id: string;
+        depth: number;
+      }>(
+        `WITH RECURSIVE eligible(session_id, parent_session_id, depth, path) AS (
+           SELECT session_id, parent_session_id, 1, '|' || session_id || '|'
+           FROM sessions
+           WHERE parent_session_id = ?
+             AND first_observed_at <= ?
+             AND NOT EXISTS (
+               SELECT 1 FROM session_attributions
+               WHERE session_attributions.session_id = sessions.session_id
+             )
+           UNION ALL
+           SELECT child.session_id, child.parent_session_id, eligible.depth + 1,
+                  eligible.path || child.session_id || '|'
+           FROM sessions AS child
+           JOIN eligible ON child.parent_session_id = eligible.session_id
+           WHERE child.first_observed_at <= ?
+             AND NOT EXISTS (
+               SELECT 1 FROM session_attributions
+               WHERE session_attributions.session_id = child.session_id
+             )
+             AND instr(eligible.path, '|' || child.session_id || '|') = 0
+         )
+         SELECT session_id, parent_session_id, depth
+         FROM eligible
+         ORDER BY depth, session_id`,
+      )
+      .all(rootSessionID, observedAt, observedAt);
+    const receiptBySession = new Map([[rootSessionID, rootReceiptID]]);
+    for (const descendant of descendants) {
+      const sourceReceiptID = receiptBySession.get(descendant.parent_session_id);
+      if (!sourceReceiptID) throw new Error("descendant attribution ancestry is incomplete");
+      const inheritedReceiptID = `inherit:${descendant.session_id}`;
+      const receiptID = this.db
+        .query("SELECT 1 FROM association_receipts WHERE receipt_id = ?")
+        .get(inheritedReceiptID)
+        ? `inherit:${rootReceiptID}:${descendant.session_id}`
+        : inheritedReceiptID;
+      this.db
+        .query(
+          "INSERT OR IGNORE INTO association_receipts (receipt_id, session_id, bead_id, source, observed_at, source_receipt_id) VALUES (?, ?, ?, 'inherited-lane', ?, ?)",
+        )
+        .run(receiptID, descendant.session_id, beadID, observedAt, sourceReceiptID);
+      const actions = this.db
+        .query<ActionRow>("SELECT * FROM actions WHERE session_id = ? AND outcome = 'open'")
+        .all(descendant.session_id);
+      this.associateSession(
+        descendant.session_id,
+        beadID,
+        "inherited-lane",
+        observedAt,
+        undefined,
+        true,
+        actions,
+      );
+      receiptBySession.set(descendant.session_id, receiptID);
+    }
   }
   private insertLifecycleReceipt(
     input: LifecycleReceipt,

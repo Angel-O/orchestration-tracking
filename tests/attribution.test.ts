@@ -9,6 +9,7 @@ import {
 } from "../src/attribution.js";
 import { parseOptions } from "../src/options.js";
 import { TrackerPlugin } from "../src/plugin.js";
+import { generateReport } from "../src/report.js";
 import { TrackerStore } from "../src/store.js";
 
 function fixture(): { directory: string; store: TrackerStore } {
@@ -309,6 +310,315 @@ describe("authoritative attribution transitions", () => {
     expect(source.calls).toEqual([["show", "bead-alpha", "--json"]]);
     store.close();
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("recursively attributes pre-creation delegated activity in the generated report", () => {
+    const { directory, store } = fixture();
+    try {
+      store.recordTopology({ beadID: "bead-pre", type: "feature", validatedAt: 1 });
+      store.recordSession({ sessionID: "root", observedAt: 100 });
+      store.recordSession({ sessionID: "investigator", parentSessionID: "root", observedAt: 110 });
+      store.recordSession({
+        sessionID: "architect",
+        parentSessionID: "investigator",
+        observedAt: 120,
+      });
+      store.startAction({ sessionID: "root", actionID: "root-scope", startedAt: 100 });
+      store.endAction({
+        eventID: "root-scope-end",
+        aggregateID: "root",
+        sequence: 1,
+        sessionID: "root",
+        actionID: "root-scope",
+        outcome: "completed",
+        endedAt: 130,
+      });
+      store.startAction({
+        sessionID: "investigator",
+        actionID: "investigate",
+        observedRole: "investigator",
+        startedAt: 110,
+      });
+      store.endAction({
+        eventID: "investigate-end",
+        aggregateID: "investigator",
+        sequence: 1,
+        sessionID: "investigator",
+        actionID: "investigate",
+        outcome: "completed",
+        endedAt: 160,
+      });
+      store.startAction({
+        sessionID: "architect",
+        actionID: "plan",
+        observedRole: "architect",
+        startedAt: 120,
+      });
+      store.endAction({
+        eventID: "plan-end",
+        aggregateID: "architect",
+        sequence: 1,
+        sessionID: "architect",
+        actionID: "plan",
+        outcome: "completed",
+        endedAt: 170,
+      });
+
+      store.recordAssociation({
+        receiptID: "create-pre",
+        sessionID: "root",
+        beadID: "bead-pre",
+        source: "creation",
+        observedAt: 200,
+      });
+
+      const report = generateReport(store, { bead: "bead-pre" }, 300).report;
+      expect(report.metrics.activeMs).toBe(130);
+      expect(report.sessions?.map(({ sessionID }) => sessionID)).toEqual([
+        "architect",
+        "investigator",
+        "root",
+      ]);
+      expect(report.actions?.map(({ sessionID, actionID }) => [sessionID, actionID])).toEqual([
+        ["root", "root-scope"],
+        ["investigator", "investigate"],
+        ["architect", "plan"],
+      ]);
+    } finally {
+      store.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("prunes attributed branches and preserves unrelated or non-null slices", () => {
+    const { directory, store } = fixture();
+    try {
+      store.recordTopology({ beadID: "bead-new", type: "feature", validatedAt: 1 });
+      store.recordTopology({ beadID: "bead-old", type: "bug", validatedAt: 1 });
+      store.recordTopology({ beadID: "bead-blocked", type: "task", validatedAt: 1 });
+      store.recordSession({ sessionID: "root", observedAt: 100 });
+      store.recordSession({ sessionID: "eligible", parentSessionID: "root", observedAt: 110 });
+      store.recordSession({ sessionID: "nested", parentSessionID: "eligible", observedAt: 120 });
+      store.recordSession({ sessionID: "mixed", parentSessionID: "root", observedAt: 110 });
+      store.recordSession({ sessionID: "blocked", parentSessionID: "root", observedAt: 110 });
+      store.recordSession({
+        sessionID: "blocked-nested",
+        parentSessionID: "blocked",
+        observedAt: 120,
+      });
+      store.recordSession({ sessionID: "other-root", observedAt: 100 });
+
+      store.startAction({ sessionID: "eligible", actionID: "eligible-work", startedAt: 110 });
+      store.endAction({
+        eventID: "eligible-end",
+        aggregateID: "eligible",
+        sequence: 1,
+        sessionID: "eligible",
+        actionID: "eligible-work",
+        outcome: "completed",
+        endedAt: 120,
+      });
+      store.startAction({ sessionID: "nested", actionID: "nested-work", startedAt: 120 });
+      store.endAction({
+        eventID: "nested-end",
+        aggregateID: "nested",
+        sequence: 1,
+        sessionID: "nested",
+        actionID: "nested-work",
+        outcome: "completed",
+        endedAt: 130,
+      });
+
+      store.recordAssociation({
+        receiptID: "mixed-old",
+        sessionID: "mixed",
+        beadID: "bead-old",
+        source: "selection",
+        observedAt: 115,
+      });
+      store.startAction({ sessionID: "mixed", actionID: "old-work", startedAt: 115 });
+      store.endAction({
+        eventID: "old-work-end",
+        aggregateID: "mixed",
+        sequence: 1,
+        sessionID: "mixed",
+        actionID: "old-work",
+        outcome: "completed",
+        endedAt: 125,
+      });
+      store.recordCloseout({
+        receiptID: "mixed-close",
+        beadID: "bead-old",
+        sessionID: "mixed",
+        closedAt: 130,
+      });
+      store.startAction({ sessionID: "mixed", actionID: "new-work", startedAt: 140 });
+      store.endAction({
+        eventID: "new-work-end",
+        aggregateID: "mixed",
+        sequence: 2,
+        sessionID: "mixed",
+        actionID: "new-work",
+        outcome: "completed",
+        endedAt: 150,
+      });
+
+      store.recordAssociation({
+        receiptID: "blocked-old",
+        sessionID: "blocked",
+        beadID: "bead-blocked",
+        source: "selection",
+        observedAt: 115,
+      });
+      store.startAction({ sessionID: "blocked-nested", actionID: "blocked-work", startedAt: 120 });
+      store.endAction({
+        eventID: "blocked-end",
+        aggregateID: "blocked-nested",
+        sequence: 1,
+        sessionID: "blocked-nested",
+        actionID: "blocked-work",
+        outcome: "completed",
+        endedAt: 130,
+      });
+      store.startAction({ sessionID: "other-root", actionID: "other-work", startedAt: 100 });
+      store.endAction({
+        eventID: "other-end",
+        aggregateID: "other-root",
+        sequence: 1,
+        sessionID: "other-root",
+        actionID: "other-work",
+        outcome: "completed",
+        endedAt: 130,
+      });
+
+      store.recordAssociation({
+        receiptID: "create-new",
+        sessionID: "root",
+        beadID: "bead-new",
+        source: "creation",
+        observedAt: 200,
+      });
+
+      expect(
+        store
+          .listActivitySlices()
+          .filter((slice) => slice.sessionID === "mixed")
+          .map(({ beadID, associationSource, startedAt, endedAt }) => [
+            beadID,
+            associationSource,
+            startedAt,
+            endedAt,
+          ]),
+      ).toEqual([
+        ["bead-old", "selection", 115, 125],
+        ["bead-new", "inherited-lane", 140, 150],
+      ]);
+      expect(
+        store
+          .listActivitySlices()
+          .filter((slice) => ["eligible", "nested"].includes(slice.sessionID))
+          .every((slice) => slice.beadID === "bead-new"),
+      ).toBe(true);
+      expect(
+        store
+          .listActivitySlices()
+          .filter((slice) => ["blocked", "blocked-nested", "other-root"].includes(slice.sessionID))
+          .every((slice) => slice.beadID === null),
+      ).toBe(true);
+      expect(
+        store
+          .listAssociationReceipts()
+          .map(({ sessionID }) => sessionID)
+          .sort(),
+      ).toEqual(["blocked", "eligible", "mixed", "mixed", "nested", "root"].sort());
+    } finally {
+      store.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("attributes later actions and lets post-creation children inherit normally", () => {
+    const { directory, store } = fixture();
+    try {
+      store.recordTopology({ beadID: "bead-running", type: "feature", validatedAt: 1 });
+      store.recordSession({ sessionID: "root", observedAt: 100 });
+      store.recordSession({ sessionID: "running", parentSessionID: "root", observedAt: 110 });
+      store.recordAssociation({
+        receiptID: "create-running",
+        sessionID: "root",
+        beadID: "bead-running",
+        source: "creation",
+        observedAt: 200,
+      });
+      store.startAction({ sessionID: "running", actionID: "later-work", startedAt: 220 });
+      store.endAction({
+        eventID: "later-end",
+        aggregateID: "running",
+        sequence: 1,
+        sessionID: "running",
+        actionID: "later-work",
+        outcome: "completed",
+        endedAt: 240,
+      });
+      store.recordSession({
+        sessionID: "after-child",
+        parentSessionID: "running",
+        observedAt: 250,
+      });
+      store.startAction({ sessionID: "after-child", actionID: "inherited-work", startedAt: 260 });
+      store.endAction({
+        eventID: "inherited-end",
+        aggregateID: "after-child",
+        sequence: 1,
+        sessionID: "after-child",
+        actionID: "inherited-work",
+        outcome: "completed",
+        endedAt: 270,
+      });
+
+      expect(
+        store
+          .listActivitySlices()
+          .filter((slice) => ["running", "after-child"].includes(slice.sessionID))
+          .map(({ sessionID, beadID, associationSource }) => [
+            sessionID,
+            beadID,
+            associationSource,
+          ]),
+      ).toEqual([
+        ["running", "bead-running", "inherited-lane"],
+        ["after-child", "bead-running", "inherited-lane"],
+      ]);
+      expect(store.listAssociationReceipts()).toEqual([
+        {
+          receiptID: "create-running",
+          sessionID: "root",
+          beadID: "bead-running",
+          source: "creation",
+          observedAt: 200,
+          sourceReceiptID: null,
+        },
+        {
+          receiptID: "inherit:running",
+          sessionID: "running",
+          beadID: "bead-running",
+          source: "inherited-lane",
+          observedAt: 200,
+          sourceReceiptID: "create-running",
+        },
+        {
+          receiptID: "inherit:after-child",
+          sessionID: "after-child",
+          beadID: "bead-running",
+          source: "inherited-lane",
+          observedAt: 250,
+          sourceReceiptID: "inherit:running",
+        },
+      ]);
+    } finally {
+      store.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("registers child publication without changing epic attribution", async () => {
