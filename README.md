@@ -91,6 +91,11 @@ raw-fact high-water mark from the same consistent snapshot used to build them.
 
 ## Attribution transitions
 
+The bounded authoritative validator lives in `src/attribution/authoritative-bead.ts`,
+and mutation behavior lives in `src/attribution/transitions.ts`. `src/attribution.ts`
+remains a compatibility facade, so the existing root exports and internal imports
+keep their identity and error behavior.
+
 The tracker exposes three mutation tools: `tracking_bead_created`,
 `tracking_bead_select`, and `tracking_closeout`. Each accepts only `{ beadID }`;
 the tracker runs `wbd show <beadID> --json` with argv arguments, a short timeout,
@@ -108,6 +113,14 @@ the active Bead and replaying a receipt are no-ops. Closeout records the first
 validated concrete or epic closeout. Concrete closeout resets only the invoking
 session when it is currently associated with that exact Bead; epic closeout
 does not alter child workstreams.
+
+`src/hub.ts` was removed in Wave 2 after the pre-change deletion check found
+no source, test, package-export, or runtime-discovery reference to it (this
+note is the intentional documentation record of that decision).
+Its topology-array helper had no caller or public export; the supported
+validator and transition tests cover the required single-record and direct-
+parent behavior. Its unused 5-second/256 KiB command bounds were not part of
+the supported attribution path; the preserved path remains 2 seconds/64 KiB.
 
 ## Launch and retention contract
 

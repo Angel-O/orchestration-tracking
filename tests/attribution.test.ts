@@ -7,6 +7,8 @@ import {
   validateAuthoritativeBead,
   type WbdShowRunner,
 } from "../src/attribution.js";
+import { validateAuthoritativeBead as directValidateAuthoritativeBead } from "../src/attribution/authoritative-bead.js";
+import { AttributionTransitions as DirectAttributionTransitions } from "../src/attribution/transitions.js";
 import { parseOptions } from "../src/config/options.js";
 import { TrackerPlugin } from "../src/plugin.js";
 import { generateReport } from "../src/report.js";
@@ -39,6 +41,11 @@ function fakeWbd(directory: string, output: string): void {
 }
 
 describe("authoritative attribution transitions", () => {
+  test("keeps the attribution facade mapped to the approved boundaries", () => {
+    expect(validateAuthoritativeBead).toBe(directValidateAuthoritativeBead);
+    expect(AttributionTransitions).toBe(DirectAttributionTransitions);
+  });
+
   test("registers only the approved tracker tool surface", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tracker-tools-"));
     const registered: { name: string }[] = [];
@@ -258,6 +265,12 @@ describe("authoritative attribution transitions", () => {
       await validateAuthoritativeBead("bead-alpha", async () =>
         JSON.stringify([{ id: "bead-alpha", issue_type: "todo" }]),
       );
+      throw new Error("expected validation failure");
+    } catch (error) {
+      expect((error as Error).message).toBe("authoritative Bead validation failed");
+    }
+    try {
+      await validateAuthoritativeBead("bead-alpha", async () => "x".repeat(64 * 1024 + 1));
       throw new Error("expected validation failure");
     } catch (error) {
       expect((error as Error).message).toBe("authoritative Bead validation failed");

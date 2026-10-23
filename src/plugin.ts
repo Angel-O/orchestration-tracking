@@ -1,10 +1,7 @@
 import { Plugin } from "@opencode/plugin";
 import { basename } from "node:path";
-import {
-  AttributionTransitions,
-  validateAuthoritativeBead,
-  type ValidatedBead,
-} from "./attribution.js";
+import { validateAuthoritativeBead, type ValidatedBead } from "./attribution/authoritative-bead.js";
+import { AttributionTransitions } from "./attribution/transitions.js";
 import { parseOptions } from "./config/options.js";
 import { generateReport, type ReportGenerationResult, type ReportSelector } from "./report.js";
 import {
