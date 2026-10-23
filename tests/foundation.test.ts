@@ -18,9 +18,12 @@ function cleanup(directory: string, store: TrackerStore): void {
 }
 
 describe("clean-break private tracker foundation", () => {
-  test("creates only the new protected schema and never opens the legacy file", () => {
+  test("creates only the new protected schema and never opens the previous-generation file", () => {
     const directory = mkdtempSync(join(tmpdir(), "tracker-schema-"));
-    writeFileSync(join(directory, "tracker-v2.sqlite"), "legacy prompt response transcript");
+    writeFileSync(
+      join(directory, "tracker-v2.sqlite"),
+      "previous-generation prompt response transcript",
+    );
     const store = TrackerStore.open(parseOptions({ dataDir: directory }));
     const databasePath = join(directory, DATABASE_FILENAME);
     expect(existsSync(databasePath)).toBe(true);
@@ -53,7 +56,9 @@ describe("clean-break private tracker foundation", () => {
       "sqlite_sequence",
     ]);
     database.close();
-    expect(readFileSync(join(directory, "tracker-v2.sqlite"), "utf8")).toContain("legacy prompt");
+    expect(readFileSync(join(directory, "tracker-v2.sqlite"), "utf8")).toContain(
+      "previous-generation prompt",
+    );
     cleanup(directory, { close: () => undefined } as TrackerStore);
   });
 

@@ -49,13 +49,13 @@ export {
   REPORT_PHASES,
   type ChildSummary,
   type InitiativeState,
-  type LegacyAgentTotal,
-  type LegacyDetailModel,
-  type LegacyPass,
-  type LegacyPhaseTotal,
-  type LegacyRepeatSignal,
-  type LegacySessionTotal,
-  type LegacyTimelineSegment,
+  type ReportDetailAgentTotal,
+  type ReportDetailModel,
+  type ReportDetailPass,
+  type ReportDetailPhaseTotal,
+  type ReportDetailRepeatSignal,
+  type ReportDetailSessionTotal,
+  type ReportDetailTimelineSegment,
   type LifecycleState,
   type NormalizedSelector,
   type OutcomeCounts,
@@ -70,7 +70,7 @@ export {
   type ReportSelector,
   type ReportSession,
 } from "./report.js";
-export { renderLegacyDetailHtml } from "./report-html.js";
+export { renderReportDetailHtml } from "./report-html.js";
 export {
   createReportViewer,
   launchReportViewerBrowser,
