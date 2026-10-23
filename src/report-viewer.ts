@@ -4,7 +4,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { buildReportModels, type ReportSelector } from "./report.js";
 import { renderReportDetailHtml } from "./report-html.js";
-import type { TrackerStore } from "./store.js";
+import type { TrackerStore } from "./tracking/store.js";
 
 export const REPORT_VIEWER_LIFETIME_MS = 10 * 60 * 1000;
 

@@ -10,7 +10,7 @@ import {
   type ReportViewerMetadata,
   type ReportViewerOptions,
 } from "./report-viewer.js";
-import { TrackerStore } from "./store.js";
+import { TrackerStore } from "./tracking/store.js";
 import { validateBeadID } from "./shared/validation.js";
 
 const PLUGIN_ID = "orchestration-tracking";

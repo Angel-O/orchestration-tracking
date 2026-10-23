@@ -1,4 +1,4 @@
-import type { TrackerStore } from "../store.js";
+import type { TrackerStore } from "../tracking/store.js";
 import { validateAuthoritativeBead, type ValidatedBead } from "./authoritative-bead.js";
 
 export interface TransitionContext {

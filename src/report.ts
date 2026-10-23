@@ -11,8 +11,8 @@ import type {
   CloseoutRecordView,
   ReportSnapshot,
   SessionRecord,
-  TrackerStore,
-} from "./store.js";
+} from "./tracking/models.js";
+import type { TrackerStore } from "./tracking/store.js";
 
 /** Fixed policy; callers cannot supply phase or purpose language. */
 export const REPORTING_POLICY_VERSION = "session-attribution-v1" as const;
