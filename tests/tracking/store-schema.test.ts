@@ -4,10 +4,9 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { parseOptions } from "../../src/config/options.js";
-import { DATABASE_FILENAME, TrackerStore } from "../../src/store.js";
+import { DATABASE_FILENAME, TrackerStore } from "../../src/tracking/store.js";
 import { readBead, rowToAction, rowToSession, rowToSlice } from "../../src/tracking/models.js";
 import { SCHEMA, SCHEMA_VERSION } from "../../src/tracking/schema.js";
-import { TrackerStore as DirectTrackerStore } from "../../src/tracking/store.js";
 
 function cleanup(directory: string, store: TrackerStore): void {
   store.close();
@@ -121,10 +120,10 @@ test("row adapters keep persisted values in the public model shape", () => {
   ).toEqual({ beadID: "global-abc1", type: "task", parentBeadID: null, validatedAt: 30 });
 });
 
-test("schema owns static database facts while the facade preserves the concrete store", () => {
+test("schema owns static database facts while the concrete store remains stable", () => {
   expect(DATABASE_FILENAME).toBe("tracker-v3.sqlite");
   expect(SCHEMA_VERSION).toBe(1);
   expect(SCHEMA).toContain("CREATE TABLE sessions");
   expect(SCHEMA).toContain("CREATE TABLE reports");
-  expect(DirectTrackerStore).toBe(TrackerStore);
+  expect(typeof TrackerStore.open).toBe("function");
 });

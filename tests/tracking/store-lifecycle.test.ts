@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { parseOptions } from "../../src/config/options.js";
 import { TrackerPlugin } from "../../src/plugin.js";
-import { TrackerStore } from "../../src/store.js";
+import { TrackerStore } from "../../src/tracking/store.js";
 
 test("replays actions and terminal receipts without duplication", () => {
   const { directory, store } = fixture();

@@ -1,6 +1,6 @@
 import { disposeTrackerFixture, trackerFixture as fixture } from "../support/tracker-fixture.js";
 import { expect, test } from "bun:test";
-import { UNASSIGNED_RETENTION_MS } from "../../src/store.js";
+import { UNASSIGNED_RETENTION_MS } from "../../src/tracking/store.js";
 
 test("does not admit a launch descriptor after the first action", () => {
   const { directory, store } = fixture();
