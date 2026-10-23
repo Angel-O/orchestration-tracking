@@ -1,7 +1,7 @@
 import { Plugin } from "@opencode/plugin";
 import { basename } from "node:path";
-import { consumeLaunchDescriptor, type LaunchSession } from "./launch.js";
-import { registerTrackingTools } from "./tools.js";
+import { consumeLaunchDescriptor, type LaunchSession, type LaunchSessionAPI } from "./launch.js";
+import { registerTrackingTools, type ToolRegistrar } from "./tools.js";
 import { parseOptions } from "../config/options.js";
 import type { ReportSelector } from "../reporting/models.js";
 import {
@@ -109,12 +109,7 @@ export const TrackerPlugin = Plugin.define({
             projectLabel: configuredProjectLabel,
           });
           await consumeLaunchDescriptor(
-            ctx.session as unknown as {
-              readonly update?: (input: {
-                readonly sessionID: string;
-                readonly metadata: Record<string, unknown>;
-              }) => Promise<unknown>;
-            },
+            ctx.session as unknown as LaunchSessionAPI,
             store,
             hostSession,
             startedAt,
@@ -165,7 +160,7 @@ export const TrackerPlugin = Plugin.define({
       };
       if (ctx.tool) {
         toolRegistration = await registerTrackingTools(
-          ctx.tool as never,
+          ctx.tool as unknown as ToolRegistrar,
           store,
           deliverViewer,
           diagnose,

@@ -87,6 +87,11 @@ export class TrackerStore {
     return new TrackerStore(openTrackerDatabase(options.dataDir), options);
   }
 
+  /** The configured private artifact directory, exposed for report persistence only. */
+  get dataDir(): string {
+    return this.options.dataDir;
+  }
+
   close(): void {
     try {
       this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");

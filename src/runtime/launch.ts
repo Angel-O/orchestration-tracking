@@ -2,7 +2,7 @@ import {
   validateAuthoritativeBead,
   type ValidatedBead,
 } from "../attribution/authoritative-bead.js";
-import { TrackerStore } from "../tracking/store.js";
+import type { AttributionStore } from "../attribution/transitions.js";
 import { validateBeadID } from "../shared/validation.js";
 
 /** Metadata key used by the host to admit a launch into the first action. */
@@ -19,12 +19,13 @@ export type LaunchSession = {
   readonly metadata?: Record<string, unknown>;
 };
 
-type LaunchSessionAPI = {
+/** The host capability required to remove an admitted launch descriptor. */
+export interface LaunchSessionAPI {
   readonly update?: (input: {
     readonly sessionID: string;
     readonly metadata: Record<string, unknown>;
   }) => Promise<unknown>;
-};
+}
 
 type Diagnose = (message: string, error: unknown) => void;
 
@@ -57,7 +58,7 @@ function parseLaunchDescriptor(value: unknown): LaunchDescriptor {
 /** Admit one exact-session launch descriptor without blocking host delivery. */
 export async function consumeLaunchDescriptor(
   sessionAPI: LaunchSessionAPI,
-  store: TrackerStore,
+  store: AttributionStore,
   session: LaunchSession,
   observedAt: number,
   diagnose: Diagnose,

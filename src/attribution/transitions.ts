@@ -1,5 +1,22 @@
-import type { TrackerStore } from "../tracking/store.js";
+import type {
+  AssociationRecord,
+  BeadRecord,
+  CloseoutRecord,
+  CloseoutRecordView,
+  SessionRecord,
+  TopologyRecord,
+} from "../tracking/models.js";
 import { validateAuthoritativeBead, type ValidatedBead } from "./authoritative-bead.js";
+
+/** Attribution's complete topology and association capability, not a database facade. */
+export interface AttributionStore {
+  listSessions(): SessionRecord[];
+  listBeads(): BeadRecord[];
+  listCloseouts(): CloseoutRecordView[];
+  recordTopology(input: TopologyRecord): BeadRecord;
+  recordAssociation(input: AssociationRecord): boolean;
+  recordCloseout(input: CloseoutRecord): CloseoutRecordView;
+}
 
 export interface TransitionContext {
   readonly sessionID: string;
@@ -35,7 +52,7 @@ function usableContext(context: TransitionContext): boolean {
  */
 export class AttributionTransitions {
   constructor(
-    private readonly store: TrackerStore,
+    private readonly store: AttributionStore,
     private readonly validate: Validator = (beadID) => validateAuthoritativeBead(beadID),
   ) {}
 

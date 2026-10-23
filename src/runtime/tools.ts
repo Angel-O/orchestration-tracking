@@ -1,8 +1,9 @@
 import { AttributionTransitions } from "../attribution/transitions.js";
+import type { AttributionStore } from "../attribution/transitions.js";
 import { generateReport } from "../reporting/artifacts.js";
+import type { ReportArtifactStore } from "../reporting/contracts.js";
 import type { ReportGenerationResult, ReportSelector } from "../reporting/models.js";
 import type { ReportViewerMetadata } from "../reporting/viewer.js";
-import { TrackerStore } from "../tracking/store.js";
 import { validateBeadID } from "../shared/validation.js";
 
 const transitionOutputSchema = {
@@ -36,11 +37,12 @@ type RegisteredTool = {
   readonly execute: (rawArgs: unknown, context?: unknown) => Promise<{ output: unknown }>;
 };
 
-type ToolRegistrar = {
+/** The only host capability needed to register and dispose tracking tools. */
+export interface ToolRegistrar {
   readonly transform: (
     callback: (tools: { readonly add: (tool: RegisteredTool) => void }) => void,
   ) => Promise<{ readonly dispose: () => unknown }>;
-};
+}
 
 type DeliverViewer = (selector: ReportSelector) => Promise<ReportViewerMetadata>;
 
@@ -102,7 +104,7 @@ function reportToolResult(
 /** Register tracking tools; execution remains non-blocking for host delivery. */
 export async function registerTrackingTools(
   tool: ToolRegistrar,
-  store: TrackerStore,
+  store: AttributionStore & ReportArtifactStore,
   deliverViewer: DeliverViewer,
   diagnose: Diagnose,
 ): Promise<{ readonly dispose: () => unknown }> {

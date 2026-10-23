@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { TrackerStore } from "../tracking/store.js";
 import { buildReportModels } from "./build.js";
+import type { ReportArtifactStore } from "./contracts.js";
 import { renderReport } from "./markdown.js";
 import {
   REPORTING_POLICY_VERSION,
@@ -30,7 +30,7 @@ function writePrivateArtifact(reportDirectory: string, fileName: string, content
 
 /** Classify local facts and atomically replace one private JSON/Markdown artifact pair. */
 export function generateReport(
-  store: TrackerStore,
+  store: ReportArtifactStore,
   input: ReportSelector = {},
   generatedAt = Date.now(),
 ): ReportGenerationResult {
@@ -39,7 +39,7 @@ export function generateReport(
   const reportID = stableReportID(selector);
   const artifactKey = `reports/${reportID}.json`;
   const renderedArtifactKey = `reports/${reportID}.md`;
-  const reportDirectory = join(store.options.dataDir, "reports");
+  const reportDirectory = join(store.dataDir, "reports");
   mkdirSync(reportDirectory, { recursive: true, mode: 0o700 });
   chmodSync(reportDirectory, 0o700);
   const artifactPath = writePrivateArtifact(

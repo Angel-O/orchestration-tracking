@@ -3,9 +3,9 @@ import { spawn } from "node:child_process";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { buildReportModels } from "./build.js";
+import type { ReportSnapshotReader } from "./contracts.js";
 import { renderReportDetailHtml } from "./html.js";
 import type { ReportSelector } from "./models.js";
-import type { TrackerStore } from "../tracking/store.js";
 
 export const REPORT_VIEWER_LIFETIME_MS = 10 * 60 * 1000;
 
@@ -184,7 +184,7 @@ function launchWithAbort(
 
 /** Start one dynamic report viewer and attempt one native browser launch. */
 export async function createReportViewer(
-  store: TrackerStore,
+  store: ReportSnapshotReader,
   input: ReportSelector = {},
   options: ReportViewerOptions = {},
 ): Promise<ReportViewer> {

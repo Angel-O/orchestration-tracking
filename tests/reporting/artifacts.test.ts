@@ -27,6 +27,7 @@ function end(
 test("regenerates one stable private artifact atomically and excludes source content", () => {
   const { directory, store } = fixture();
   try {
+    expect(store.dataDir).toBe(directory);
     store.recordTopology({ beadID: "bead-1", type: "feature", validatedAt: 1 });
     store.recordSession({ sessionID: "session-1", observedAt: 10 });
     store.recordAssociation({
