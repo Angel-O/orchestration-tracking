@@ -1,7 +1,7 @@
 import type { ActionOutcome, BeadType } from "../tracking/models.js";
 
 /** Fixed policy; callers cannot supply phase or purpose language. */
-export const REPORTING_POLICY_VERSION = "session-attribution-v1" as const;
+export const REPORTING_POLICY_VERSION = "session-attribution-v2" as const;
 export const PRIVACY_NOTICE =
   "Derived from private local lifecycle facts; source content is not retained.";
 export const REPORT_NOTICES = [
@@ -121,7 +121,7 @@ export interface ReportDocument {
   readonly children?: readonly ChildSummary[];
 }
 
-/** One captured phase bucket for the report-detail renderer. */
+/** One derived report phase bucket for the report-detail renderer. */
 export interface ReportDetailPhaseTotal {
   readonly phaseKey: string;
   readonly phaseLabel: string;

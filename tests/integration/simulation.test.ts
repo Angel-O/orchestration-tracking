@@ -184,9 +184,9 @@ test("covers standalone creation, resume, switching, closeout, B2 scoping, and r
 
     const beforeCloseout = generateReport(store, { bead: "bead-a" }, 600).report;
     expect(beforeCloseout.metrics.activeMs).toBe(250);
-    expect(beforeCloseout.phaseTotals.scoping.activeMs).toBe(120);
+    expect(beforeCloseout.phaseTotals.scoping.activeMs).toBe(100);
     expect(beforeCloseout.phaseTotals.implementation.activeMs).toBe(90);
-    expect(beforeCloseout.phaseTotals.coordination.activeMs).toBe(40);
+    expect(beforeCloseout.phaseTotals.coordination.activeMs).toBe(60);
     expect(beforeCloseout.metrics.sessionCount).toBe(2);
     expect(generateReport(store, { bead: "bead-b" }, 600).report.metrics.activeMs).toBe(20);
 
@@ -230,7 +230,8 @@ test("covers standalone creation, resume, switching, closeout, B2 scoping, and r
 
     const b2 = generateReport(store, { bead: "bead-b2" }, 700).report;
     expect(b2.lifecycleState).toBe("Active — closeout not observed");
-    expect(b2.phaseTotals.scoping.activeMs).toBe(60);
+    expect(b2.phaseTotals.scoping.activeMs).toBe(40);
+    expect(b2.phaseTotals.coordination.activeMs).toBe(20);
     expect(b2.metrics.activeMs).toBe(60);
     expect(store.listCloseouts()).toEqual([
       { receiptID: "close-a-receipt", beadID: "bead-a", kind: "concrete", closedAt: 520 },
