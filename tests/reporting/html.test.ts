@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { renderReportDetailHtml } from "../../src/index.js";
+import { renderReportDetailHtml } from "../../src/reporting/html.js";
 import type { ReportDetailModel } from "../../src/reporting/models.js";
 
 const phaseTotals = {
@@ -161,6 +161,17 @@ test("renders report detail as escaped, self-contained HTML with truthful bars",
   expect(passCell).toContain("left:0%;width:25%;");
   expect(passCell).toContain("left:75%;width:25%;");
   expect((passCell.match(/class="timeline-segment"/g) ?? []).length).toBe(2);
+});
+
+test("renders generated and finalized timestamps in local time", () => {
+  const generatedAt = Date.parse("2025-06-15T12:34:56.789Z");
+  const finalizedAt = Date.parse("2025-06-16T01:23:45.678Z");
+  const html = renderReportDetailHtml({ ...detail, generatedAt, finalizedAt });
+
+  expect(html).toContain(`<dt>Generated</dt><dd>${new Date(generatedAt).toLocaleString()}</dd>`);
+  expect(html).toContain(`<dt>Finalized</dt><dd>${new Date(finalizedAt).toLocaleString()}</dd>`);
+  expect(html).not.toContain(new Date(generatedAt).toISOString());
+  expect(html).not.toContain(new Date(finalizedAt).toISOString());
 });
 
 test("keeps non-epic detail focused on its selected child projection", () => {

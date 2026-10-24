@@ -408,8 +408,8 @@ test("tracking_report selects standalone, child, epic, and intersecting session/
     const combinedHtml = await (await fetch(combinedViewer.output.viewer.url)).text();
     expect(combinedHtml).toContain("bead: child-1");
     expect(combinedHtml).toContain("sessions: child-session");
-    expect(combinedHtml).toContain("from: 1970-01-01T00:00:00.032Z");
-    expect(combinedHtml).toContain("to: 1970-01-01T00:00:00.038Z");
+    expect(combinedHtml).toContain(`from: ${new Date(32).toLocaleString()}`);
+    expect(combinedHtml).toContain(`to: ${new Date(38).toLocaleString()}`);
 
     const bare = await execute({});
     expect(Object.hasOwn(bare.output, "viewer")).toBe(false);
