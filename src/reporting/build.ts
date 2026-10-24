@@ -11,6 +11,7 @@ import type {
 } from "../tracking/models.js";
 import {
   PRIVACY_NOTICE,
+  PHASE_LABELS,
   REPORT_NOTICES,
   REPORTING_POLICY_VERSION,
   REPORT_PHASES,
@@ -105,19 +106,20 @@ function phaseFor(
   sessions: readonly SessionRecord[],
   actions: readonly ActionRecord[],
   slices: readonly ActivitySliceRecord[],
-  creationScopeStarts: ReadonlyMap<string, number>,
+  creationBoundaries: ReadonlyMap<string, number>,
+  creationLineageSessions: ReadonlySet<string>,
   inherit = true,
 ): { phase: ReportPhase; warning: boolean } {
   if (!bead) return { phase: "unclassified", warning: true };
-  const creationScopeStart = creationScopeStarts.get(`${slice.sessionID}:${bead.beadID}`);
-  if (
-    slice.associationSource === "creation" &&
-    (creationScopeStart === undefined || action.startedAt <= creationScopeStart)
-  ) {
-    if (bead.type === "epic") return { phase: "scoping-decomposition", warning: false };
-    return bead.parentBeadID === null
-      ? { phase: "scoping", warning: false }
-      : { phase: "unclassified", warning: true };
+  const preCreation =
+    slice.associationSource !== null &&
+    ["creation", "inherited-lane"].includes(slice.associationSource) &&
+    creationLineageSessions.has(`${slice.sessionID}:${bead.beadID}`) &&
+    (creationBoundaries.get(bead.beadID) ?? Number.POSITIVE_INFINITY) > slice.startedAt;
+  if (preCreation) {
+    if (bead.type === "epic" && ["architect", "planner", "plan"].includes(action.observedRole))
+      return { phase: "scoping-decomposition", warning: false };
+    if (bead.parentBeadID === null) return { phase: "scoping", warning: false };
   }
   if (bead.type === "epic") {
     if (["architect", "planner", "plan"].includes(action.observedRole))
@@ -167,13 +169,14 @@ function phaseFor(
       const parent = candidates[0];
       if (parent) {
         const inherited = phaseFor(
-          parent.candidate,
+          { ...parent.candidate, startedAt: slice.startedAt, endedAt: slice.endedAt },
           parent.candidateAction,
           bead,
           sessions,
           actions,
           slices,
-          creationScopeStarts,
+          creationBoundaries,
+          creationLineageSessions,
           false,
         );
         if (inherited.phase !== "unclassified") return inherited;
@@ -211,23 +214,52 @@ function toEntry(
   sessions: readonly SessionRecord[],
   actions: readonly ActionRecord[],
   slices: readonly ActivitySliceRecord[],
-  creationScopeStarts: ReadonlyMap<string, number>,
-): Entry {
+  creationBoundaries: ReadonlyMap<string, number>,
+  creationLineageSessions: ReadonlySet<string>,
+): Entry[] {
   const startedAt = Math.max(slice.startedAt, selector.from ?? slice.startedAt);
   const rawEnd =
     slice.endedAt ?? action.endedAt ?? (action.outcome === "open" ? generatedAt : null);
   const endedAt = rawEnd === null ? null : Math.min(rawEnd, selector.to ?? rawEnd);
-  const phase = phaseFor(slice, action, bead, sessions, actions, slices, creationScopeStarts).phase;
-  return {
+  const boundary = bead === undefined ? undefined : creationBoundaries.get(bead.beadID);
+  const creationLineage =
+    bead !== undefined &&
+    slice.associationSource !== null &&
+    ["creation", "inherited-lane"].includes(slice.associationSource) &&
+    creationLineageSessions.has(`${slice.sessionID}:${bead.beadID}`);
+  const splitAt =
+    creationLineage &&
+    boundary !== undefined &&
+    boundary > startedAt &&
+    (endedAt === null || boundary < endedAt)
+      ? boundary
+      : undefined;
+  const segments =
+    splitAt === undefined
+      ? [{ startedAt, endedAt }]
+      : [
+          { startedAt, endedAt: splitAt },
+          { startedAt: splitAt, endedAt },
+        ];
+  return segments.map(({ startedAt: segmentStart, endedAt: segmentEnd }) => ({
     slice,
     action,
     session,
     bead,
-    activeMs: activeDuration(startedAt, endedAt, action),
-    startedAt,
-    endedAt,
-    phase,
-  };
+    activeMs: activeDuration(segmentStart, segmentEnd, action),
+    startedAt: segmentStart,
+    endedAt: segmentEnd,
+    phase: phaseFor(
+      { ...slice, startedAt: segmentStart, endedAt: segmentEnd },
+      action,
+      bead,
+      sessions,
+      actions,
+      slices,
+      creationBoundaries,
+      creationLineageSessions,
+    ).phase,
+  }));
 }
 
 function metrics(
@@ -305,34 +337,55 @@ function initiativeWindow(
   };
 }
 
-function creationScopeStarts(
+function creationPolicy(
   associations: readonly {
+    readonly receiptID: string;
     readonly sessionID: string;
     readonly beadID: string;
     readonly source: string;
     readonly observedAt: number;
+    readonly sourceReceiptID?: string | null;
   }[],
-  actions: readonly ActionRecord[],
-): Map<string, number> {
-  const result = new Map<string, number>();
+  beads: readonly BeadRecord[],
+): { boundaries: Map<string, number>; lineageSessions: Set<string> } {
+  // Derive the boundary from immutable receipts; no workflow phase is persisted.
+  const beadMap = new Map(beads.map((bead) => [bead.beadID, bead]));
+  const eligibleReceipts = new Set<string>();
+  const boundaries = new Map<string, number>();
   for (const association of associations) {
-    if (association.source !== "creation") continue;
-    const containing = actions
-      .filter(
-        (action) =>
-          action.sessionID === association.sessionID && action.startedAt <= association.observedAt,
-      )
-      .sort((left, right) => right.startedAt - left.startedAt)[0];
-    if (containing)
-      result.set(
-        `${association.sessionID}:${association.beadID}`,
-        Math.max(
-          result.get(`${association.sessionID}:${association.beadID}`) ?? 0,
-          containing.startedAt,
-        ),
-      );
+    if (association.source !== "creation" || beadMap.get(association.beadID)?.parentBeadID !== null)
+      continue;
+    eligibleReceipts.add(association.receiptID);
+    boundaries.set(
+      association.beadID,
+      Math.min(
+        boundaries.get(association.beadID) ?? Number.POSITIVE_INFINITY,
+        association.observedAt,
+      ),
+    );
   }
-  return result;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const association of associations) {
+      if (
+        association.sourceReceiptID &&
+        eligibleReceipts.has(association.sourceReceiptID) &&
+        !eligibleReceipts.has(association.receiptID)
+      ) {
+        eligibleReceipts.add(association.receiptID);
+        changed = true;
+      }
+    }
+  }
+  return {
+    boundaries,
+    lineageSessions: new Set(
+      associations
+        .filter((association) => eligibleReceipts.has(association.receiptID))
+        .map((association) => `${association.sessionID}:${association.beadID}`),
+    ),
+  };
 }
 
 function lifecycleState(
@@ -371,23 +424,28 @@ function buildReportDetail(
     actionEntries.set(key, [...(actionEntries.get(key) ?? []), entry]);
   }
   const passes = [...actionEntries.values()]
-    .map((passEntries) => {
-      const first = passEntries[0]!;
-      const segments = passEntries
-        .slice()
-        .sort(
-          (left, right) =>
-            left.startedAt - right.startedAt || left.slice.sliceID - right.slice.sliceID,
-        );
-      const startAt = Math.min(...segments.map((entry) => entry.startedAt));
-      const endAt = Math.max(...segments.map((entry) => entry.endedAt ?? entry.startedAt));
-      return {
-        first,
-        startAt,
-        endAt,
-        activeMs: segments.reduce((total, entry) => total + entry.activeMs, 0),
-        segments,
-      };
+    .flatMap((passEntries) => {
+      const byPhase = new Map<ReportPhase, Entry[]>();
+      for (const entry of passEntries)
+        byPhase.set(entry.phase, [...(byPhase.get(entry.phase) ?? []), entry]);
+      return [...byPhase.values()].map((phaseEntries) => {
+        const first = phaseEntries[0]!;
+        const segments = phaseEntries
+          .slice()
+          .sort(
+            (left, right) =>
+              left.startedAt - right.startedAt || left.slice.sliceID - right.slice.sliceID,
+          );
+        const startAt = Math.min(...segments.map((entry) => entry.startedAt));
+        const endAt = Math.max(...segments.map((entry) => entry.endedAt ?? entry.startedAt));
+        return {
+          first,
+          startAt,
+          endAt,
+          activeMs: segments.reduce((total, entry) => total + entry.activeMs, 0),
+          segments,
+        };
+      });
     })
     .sort(
       (left, right) =>
@@ -426,9 +484,9 @@ function buildReportDetail(
       sessionID: first.action.sessionID,
       actionID: first.action.actionID,
       agent: first.action.observedRole,
-      phaseKey: first.action.phaseKey,
-      phaseLabel: first.action.phaseLabel,
-      color: reportDetailPhaseColor(first.action.phaseKey),
+      phaseKey: first.phase,
+      phaseLabel: PHASE_LABELS[first.phase],
+      color: reportDetailPhaseColor(first.phase),
       outcome: first.action.outcome,
       startedAt: Math.min(...segments.map((entry) => entry.startedAt)),
       endedAt: first.action.endedAt === null ? null : endAt,
@@ -442,6 +500,8 @@ function buildReportDetail(
     { phaseKey: string; phaseLabel: string; color: string; activeMs: number; passCount: number }
   >();
   const agents = new Map<string, { agent: string; activeMs: number; passCount: number }>();
+  const phasePasses = new Map<ReportPhase, Set<string>>();
+  const agentPasses = new Map<string, Set<string>>();
   const sessions = new Map<
     string,
     {
@@ -454,58 +514,69 @@ function buildReportDetail(
   >();
   for (const pass of passes) {
     const first = pass.first;
-    const phaseKey = first.action.phaseKey;
+    const phaseKey = first.phase;
     const phase = phases.get(phaseKey);
+    const actionKey = `${first.action.sessionID}:${first.action.actionID}`;
+    const phaseActionKeys = phasePasses.get(phaseKey) ?? new Set<string>();
+    phaseActionKeys.add(actionKey);
+    phasePasses.set(phaseKey, phaseActionKeys);
     phases.set(phaseKey, {
       phaseKey,
-      phaseLabel: first.action.phaseLabel,
+      phaseLabel: PHASE_LABELS[first.phase],
       color: reportDetailPhaseColor(phaseKey),
       activeMs: (phase?.activeMs ?? 0) + pass.activeMs,
-      passCount: (phase?.passCount ?? 0) + 1,
+      passCount: phaseActionKeys.size,
     });
     const agent = first.action.observedRole;
     const agentTotal = agents.get(agent);
+    const agentActionKeys = agentPasses.get(agent) ?? new Set<string>();
+    agentActionKeys.add(actionKey);
+    agentPasses.set(agent, agentActionKeys);
     agents.set(agent, {
       agent,
       activeMs: (agentTotal?.activeMs ?? 0) + pass.activeMs,
-      passCount: (agentTotal?.passCount ?? 0) + 1,
+      passCount: agentActionKeys.size,
     });
+  }
+  for (const entries of actionEntries.values()) {
+    const first = entries[0]!;
     const session = sessions.get(first.action.sessionID);
     const outcomes = { ...(session?.outcomes ?? emptyOutcomes()) };
     outcomes[first.action.outcome] += 1;
     sessions.set(first.action.sessionID, {
       sessionID: first.action.sessionID,
       projectLabel: first.session.projectLabel,
-      activeMs: (session?.activeMs ?? 0) + pass.activeMs,
+      activeMs:
+        (session?.activeMs ?? 0) + entries.reduce((total, entry) => total + entry.activeMs, 0),
       passCount: (session?.passCount ?? 0) + 1,
       outcomes,
     });
   }
 
   const repeatGroups = new Map<string, number[]>();
-  for (const pass of passes) {
-    if (!pass.first.action.repeatEligible) continue;
-    const key = `${pass.first.action.sessionID}\u0000${pass.first.action.observedRole}`;
+  for (const entries of actionEntries.values()) {
+    const first = entries[0]!;
+    if (!first.action.repeatEligible) continue;
+    const key = `${first.action.sessionID}\u0000${first.action.observedRole}`;
     const group = repeatGroups.get(key) ?? [];
-    group.push(pass.first.action.passNumber);
+    group.push(first.action.passNumber);
     repeatGroups.set(key, group);
   }
   const repeats: ReportDetailRepeatSignal[] = [...repeatGroups.entries()]
     .filter(([, passNumbers]) => passNumbers.length > 1)
     .map(([key, passNumbers]) => {
       const [sessionID, agent] = key.split("\u0000", 2) as [string, string];
+      const repeatedPass = passes.find(
+        (pass) =>
+          pass.first.action.sessionID === sessionID &&
+          pass.first.action.observedRole === agent &&
+          pass.first.action.repeatEligible,
+      );
       return {
         sessionID,
         agent,
         phaseLabel:
-          passNumbers.length > 0
-            ? passes.find(
-                (pass) =>
-                  pass.first.action.sessionID === sessionID &&
-                  pass.first.action.observedRole === agent &&
-                  pass.first.action.repeatEligible,
-              )!.first.action.phaseLabel
-            : "Unmapped",
+          repeatedPass === undefined ? "Unmapped" : PHASE_LABELS[repeatedPass.first.phase],
         passes: passNumbers.length,
         repeated: true,
         passNumbers: [...passNumbers].sort((left, right) => left - right),
@@ -520,7 +591,7 @@ function buildReportDetail(
 
   const projectLabels = [...new Set(entries.map((entry) => entry.session.projectLabel))].sort();
   const incomplete = passes.some(({ first }) => first.action.outcome === "incomplete");
-  const unmapped = passes.some(({ first }) => first.action.phaseKey === "unmapped");
+  const unmapped = passes.some(({ first }) => first.phase === "unclassified");
   const warnings = [
     ...new Set([
       ...report.warnings,
@@ -528,9 +599,7 @@ function buildReportDetail(
         ...(first.action.outcome === "incomplete"
           ? [`incomplete pass in ${first.action.sessionID}`]
           : []),
-        ...(first.action.phaseKey === "unmapped"
-          ? [`unmapped agent in ${first.action.sessionID}`]
-          : []),
+        ...(first.phase === "unclassified" ? [`unmapped agent in ${first.action.sessionID}`] : []),
       ]),
     ]),
   ].sort();
@@ -582,7 +651,7 @@ export function buildReportModels(
     actions.map((action) => [`${action.sessionID}:${action.actionID}`, action]),
   );
   const sessionMap = new Map(sessions.map((session) => [session.sessionID, session]));
-  const creationStarts = creationScopeStarts(snapshot.associations, actions);
+  const creation = creationPolicy(snapshot.associations, beads);
   const selectedEntries = slices
     .filter((slice) => {
       const action = actionMap.get(`${slice.sessionID}:${slice.actionID}`);
@@ -590,7 +659,7 @@ export function buildReportModels(
         action !== undefined && selectedSlice(slice, action, { ...selector, bead: undefined }, now)
       );
     })
-    .map((slice) => {
+    .flatMap((slice) => {
       const action = actionMap.get(`${slice.sessionID}:${slice.actionID}`)!;
       return toEntry(
         slice,
@@ -602,7 +671,8 @@ export function buildReportModels(
         sessions,
         actions,
         slices,
-        creationStarts,
+        creation.boundaries,
+        creation.lineageSessions,
       );
     })
     .sort(

@@ -47,7 +47,7 @@ validation, and managed workflow calls remain outside this foundation.
 boundary and writes the private JSON artifact plus a deterministic Markdown
 view. `renderReport(report)` is the pure human-readable renderer. Both read
 only local facts and apply the fixed
-`session-attribution-v1` policy; neither queries Hub, mutates lifecycle state,
+`session-attribution-v2` policy; neither queries Hub, mutates lifecycle state,
 nor accepts caller-supplied phase or purpose language. Selectors may choose one
 local Bead, sessions, and an optional time range. A Bead selector automatically
 produces a standalone, child, or epic initiative report. Epic reports expose
@@ -58,7 +58,7 @@ input is exactly `buildReportModels(...).reportDetail`; it does not select,
 rebuild, or read tracker facts. The output uses inline CSS, escaped dynamic
 values, and no scripts, links, fonts, or network assets. Epic detail retains
 direct metrics and child summaries from that model while showing the captured
-pass and timeline projection.
+pass and derived phase/timeline projection.
 
 The implementation keeps that contract visible in `src/reporting/`: `models.ts`
 contains value shapes and policy constants, `build.ts` makes the snapshot-only
@@ -97,6 +97,16 @@ artifacts are written below the private data directory with a stable
 selector/policy identity and atomic replacement; report metadata records the
 raw-fact high-water mark from the same consistent snapshot used to build them.
 
+For a parentless Bead, the successful creation association receipt is the exact
+reporting boundary. Eligible creation-lineage slices strictly before that
+receipt are Scoping regardless of observed role; an interval crossing the
+receipt is projected into non-overlapping pre- and post-boundary segments, and
+post-boundary orchestrator work is Coordination. Epic decomposition remains
+Scoping and decomposition, and planning before a child is published remains on
+the epic. Unassigned work without a successful eventual creation remains
+Unclassified. These are report projections only; captured action facts and the
+SQLite schema are not rewritten.
+
 ## Attribution transitions
 
 The bounded authoritative validator lives in `src/attribution/authoritative-bead.ts`,
@@ -112,9 +122,10 @@ from tool input. Unsupported, ambiguous, unavailable, or conflicting records
 produce content-free non-blocking failure results.
 
 Creation registers immutable topology. A parentless Bead associates the
-invoking root and may reclassify only that root's preceding unassigned slices
-as scoping. A published child registers its validated parent without changing
-the publishing epic attribution or creating child activity. Explicit selection
+invoking root and may reclassify eligible creation-lineage slices before its
+successful receipt as scoping. A published child registers its validated parent
+without changing the publishing epic attribution or creating child activity.
+Explicit selection
 starts at the tool receipt boundary and never revises earlier slices; selecting
 the active Bead and replaying a receipt are no-ops. Closeout records the first
 validated concrete or epic closeout. Concrete closeout resets only the invoking

@@ -203,15 +203,175 @@ test("classifies same-root creation history as standalone scoping without infere
 
     const report = generateReport(store, { bead: "standalone-1" }, 90).report;
     expect(report.kind).toBe("standalone");
-    expect(report.phaseTotals.scoping.activeMs).toBe(30);
+    expect(report.phaseTotals.scoping.activeMs).toBe(20);
+    expect(report.phaseTotals.coordination.activeMs).toBe(10);
     expect(report.phaseTotals.implementation.activeMs).toBe(20);
     expect(report.metrics.activeMs).toBe(50);
     expect(report.warnings).toEqual([]);
     const view = renderReport(report);
     expect(view).toContain("# Standalone detailed report");
-    expect(view).toContain("| Scoping | 30 ms | 2 |");
+    expect(view).toContain("| Scoping | 20 ms | 2 |");
+    expect(view).toContain("| Coordination | 10 ms | 1 |");
     expect(view.indexOf("| Scoping |") < view.indexOf("| Implementation |")).toBe(true);
     expect(view).toContain("## Shared-clock lane timeline");
+
+    const detail = buildReportModels(
+      store.readReportSnapshot(),
+      { bead: "standalone-1" },
+      90,
+    ).reportDetail;
+    expect(detail.passes.map(({ phaseKey, activeMs }) => [phaseKey, activeMs])).toEqual([
+      ["scoping", 10],
+      ["scoping", 10],
+      ["coordination", 10],
+      ["implementation", 20],
+    ]);
+    const html = renderReportDetailHtml(detail);
+    expect(html).toContain("Scoping");
+    expect(html).toContain("Coordination");
+  } finally {
+    disposeTrackerFixture({ directory, store });
+  }
+});
+
+test("classifies every pre-creation role as scoping and leaves unassigned work unclassified", () => {
+  const { directory, store } = fixture();
+  try {
+    store.recordTopology({ beadID: "role-bead", type: "task", validatedAt: 1 });
+    store.recordSession({ sessionID: "role-root", observedAt: 1 });
+    const roles = [
+      "architect",
+      "plan",
+      "planner",
+      "orchestrator",
+      "worker",
+      "reviewer",
+      "integration",
+      "build",
+      "investigator",
+    ] as const;
+    roles.forEach((role, index) => {
+      const actionID = `role-${role}`;
+      store.startAction({
+        sessionID: "role-root",
+        actionID,
+        observedRole: role,
+        startedAt: index * 10,
+      });
+      end(store, "role-root", actionID, index * 10 + 5, index + 1);
+    });
+    store.recordSession({ sessionID: "unassigned-root", observedAt: 100 });
+    store.startAction({
+      sessionID: "unassigned-root",
+      actionID: "unassigned",
+      observedRole: "worker",
+      startedAt: 100,
+    });
+    end(store, "unassigned-root", "unassigned", 110, 1);
+    store.recordAssociation({
+      receiptID: "role-creation",
+      sessionID: "role-root",
+      beadID: "role-bead",
+      source: "creation",
+      observedAt: 90,
+    });
+
+    const report = generateReport(store, { bead: "role-bead" }, 120).report;
+    expect(report.phaseTotals.scoping).toEqual({ activeMs: 45, actionCount: 9 });
+    expect(report.phaseTotals.unclassified).toEqual({ activeMs: 0, actionCount: 0 });
+    expect(report.phaseTotals.implementation).toEqual({ activeMs: 0, actionCount: 0 });
+    const allActivity = generateReport(store, {}, 120).report;
+    expect(allActivity.phaseTotals.unclassified).toEqual({ activeMs: 10, actionCount: 1 });
+  } finally {
+    disposeTrackerFixture({ directory, store });
+  }
+});
+
+test("applies the creation boundary before epic post-creation role rules", () => {
+  const { directory, store } = fixture();
+  try {
+    store.recordTopology({ beadID: "epic-boundary", type: "epic", validatedAt: 1 });
+    store.recordSession({ sessionID: "epic-root", observedAt: 1 });
+    store.startAction({
+      sessionID: "epic-root",
+      actionID: "pre-coordinate",
+      observedRole: "orchestrator",
+      startedAt: 10,
+    });
+    end(store, "epic-root", "pre-coordinate", 20, 1);
+    store.startAction({
+      sessionID: "epic-root",
+      actionID: "pre-decompose",
+      observedRole: "planner",
+      startedAt: 20,
+    });
+    end(store, "epic-root", "pre-decompose", 30, 2);
+    store.recordAssociation({
+      receiptID: "epic-boundary-receipt",
+      sessionID: "epic-root",
+      beadID: "epic-boundary",
+      source: "creation",
+      observedAt: 40,
+    });
+    store.startAction({
+      sessionID: "epic-root",
+      actionID: "post-coordinate",
+      observedRole: "orchestrator",
+      startedAt: 50,
+    });
+    end(store, "epic-root", "post-coordinate", 60, 3);
+    store.startAction({
+      sessionID: "epic-root",
+      actionID: "post-decompose",
+      observedRole: "planner",
+      startedAt: 60,
+    });
+    end(store, "epic-root", "post-decompose", 70, 4);
+
+    const phases = generateReport(store, { bead: "epic-boundary" }, 80).report.phaseTotals;
+    expect(phases.scoping).toEqual({ activeMs: 10, actionCount: 1 });
+    expect(phases["scoping-decomposition"]).toEqual({ activeMs: 20, actionCount: 2 });
+    expect(phases.coordination).toEqual({ activeMs: 10, actionCount: 1 });
+  } finally {
+    disposeTrackerFixture({ directory, store });
+  }
+});
+
+test("derives post-boundary investigator time from the parent phase at that time", () => {
+  const { directory, store } = fixture();
+  try {
+    store.recordTopology({ beadID: "investigator-boundary", type: "feature", validatedAt: 1 });
+    store.recordSession({ sessionID: "parent", observedAt: 1 });
+    store.startAction({
+      sessionID: "parent",
+      actionID: "parent-work",
+      observedRole: "worker",
+      startedAt: 10,
+    });
+    store.recordAssociation({
+      receiptID: "investigator-boundary-receipt",
+      sessionID: "parent",
+      beadID: "investigator-boundary",
+      source: "creation",
+      observedAt: 50,
+    });
+    end(store, "parent", "parent-work", 100, 1);
+    store.recordSession({
+      sessionID: "investigator",
+      parentSessionID: "parent",
+      observedAt: 55,
+    });
+    store.startAction({
+      sessionID: "investigator",
+      actionID: "investigate-after-boundary",
+      observedRole: "investigator",
+      startedAt: 60,
+    });
+    end(store, "investigator", "investigate-after-boundary", 80, 1);
+
+    const phases = generateReport(store, { bead: "investigator-boundary" }, 110).report.phaseTotals;
+    expect(phases.scoping).toEqual({ activeMs: 40, actionCount: 1 });
+    expect(phases.implementation).toEqual({ activeMs: 70, actionCount: 2 });
   } finally {
     disposeTrackerFixture({ directory, store });
   }
