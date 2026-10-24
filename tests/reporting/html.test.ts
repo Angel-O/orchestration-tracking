@@ -131,6 +131,8 @@ test("renders report detail as escaped, self-contained HTML with truthful bars",
   const passCell = html.slice(passCellStart, html.indexOf("</td>", passCellStart));
   const directTotalsStart = html.indexOf("<h2>Direct phase totals</h2>");
   const directTotals = html.slice(directTotalsStart, html.indexOf("<h2>Child summary</h2>"));
+  const timelineStart = html.indexOf("<h3>Phase segments / Session–Shared timeline</h3>");
+  const timeline = html.slice(timelineStart, html.indexOf("<h2>Passes</h2>", timelineStart));
 
   expect(html).toContain("Direct epic active time");
   expect(html).toContain("40 ms");
@@ -142,8 +144,9 @@ test("renders report detail as escaped, self-contained HTML with truthful bars",
   );
   expect(html).not.toContain("metric-grid");
   expect(html).toMatch(
-    /<h3>Phase segments \/ Session–Shared timeline<\/h3><div class="timeline-scroll"><table><thead><tr><th>Session<\/th><th>Shared timeline<\/th><\/tr>/u,
+    /<h3>Phase segments \/ Session–Shared timeline<\/h3><div class="timeline-scroll"><table><thead><tr><th>Session<\/th><th>Active time<\/th><th>Shared timeline<\/th><\/tr>/u,
   );
+  expect(timeline).toContain('<td>session&lt;&amp;</td><td>40 ms</td><td class="segments">');
   expect(html).toContain("child&lt;&amp;");
   expect(html).toContain("Captured implementation &lt;&amp;");
   expect(html).toContain("implementation");
@@ -168,6 +171,18 @@ test("renders report detail as escaped, self-contained HTML with truthful bars",
   );
   expect(passCell).toContain("session&lt;&amp;; session-local action ordinal P7;");
   expect((passCell.match(/class="timeline-segment"/g) ?? []).length).toBe(2);
+});
+
+test("leaves active time unknown for incomplete timeline passes", () => {
+  const html = renderReportDetailHtml({
+    ...detail,
+    passes: [{ ...detail.passes[0]!, outcome: "incomplete", endedAt: null, activeMs: 0 }],
+  });
+  const timelineStart = html.indexOf("<h3>Phase segments / Session–Shared timeline</h3>");
+  const timeline = html.slice(timelineStart, html.indexOf("<h2>Passes</h2>", timelineStart));
+
+  expect(timeline).toContain('<td>session&lt;&amp;</td><td>—</td><td class="segments">');
+  expect(timeline).not.toContain("<td>0 ms</td>");
 });
 
 test("renders generated and finalized timestamps in local time", () => {

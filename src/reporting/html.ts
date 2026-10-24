@@ -172,11 +172,12 @@ function passRows(detail: ReportDetailModel): string {
 }
 
 function timelineRows(detail: ReportDetailModel): string {
-  if (detail.passes.length === 0) return '<tr><td colspan="2">None</td></tr>';
+  if (detail.passes.length === 0) return '<tr><td colspan="3">None</td></tr>';
+  // Incomplete passes have no terminal timing, so keep their active time unknown.
   return detail.passes
     .map(
       (pass) =>
-        `<tr><td>${escapeHtml(pass.sessionID)}</td><td class="segments"><div class="pass-label">P${escapeHtml(pass.passNumber)} · ${phaseSwatch(pass.color)}${escapeHtml(pass.phaseLabel)} · ${escapeHtml(pass.agent)} · ${escapeHtml(pass.outcome)}</div>${bars(pass, "pass-track")}</td></tr>`,
+        `<tr><td>${escapeHtml(pass.sessionID)}</td><td>${escapeHtml(pass.endedAt === null ? "—" : formatDuration(pass.activeMs))}</td><td class="segments"><div class="pass-label">P${escapeHtml(pass.passNumber)} · ${phaseSwatch(pass.color)}${escapeHtml(pass.phaseLabel)} · ${escapeHtml(pass.agent)} · ${escapeHtml(pass.outcome)}</div>${bars(pass, "pass-track")}</td></tr>`,
     )
     .join("");
 }
@@ -256,7 +257,7 @@ export function renderReportDetailHtml(detail: ReportDetailModel): string {
     phaseLegend(detail),
     '</div><p class="muted">P&lt;n&gt; labels are session-local action ordinals: they restart independently for each session and are not global workflow rounds. Bars show pass timing and are not interactive controls. Discontiguous selected slices remain separate bars on their pass row.</p><h3>Session summary</h3><table><thead><tr><th>Session</th><th>Passes</th><th>Active time</th><th>Outcomes</th></tr></thead><tbody>',
     sessionRows(detail),
-    '</tbody></table><h3>Phase segments / Session–Shared timeline</h3><div class="timeline-scroll"><table><thead><tr><th>Session</th><th>Shared timeline</th></tr></thead><tbody>',
+    '</tbody></table><h3>Phase segments / Session–Shared timeline</h3><div class="timeline-scroll"><table><thead><tr><th>Session</th><th>Active time</th><th>Shared timeline</th></tr></thead><tbody>',
     timelineRows(detail),
     "</tbody></table></div><h2>Passes</h2><table><thead><tr><th>Session</th><th>Observed agent</th><th>Phase</th><th>Pass</th><th>Start</th><th>End</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>",
     passRows(detail),
