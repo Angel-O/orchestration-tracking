@@ -1,7 +1,6 @@
 declare module "bun:sqlite" {
   export interface Changes {
     changes: number;
-    lastInsertRowid: number;
   }
 
   export interface Statement<T = Record<string, unknown>> {

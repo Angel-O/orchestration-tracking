@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "bun:test";
@@ -24,6 +24,18 @@ test("architecture guide records the supported boundary contract", () => {
   expect(guide).toContain(
     "`orchestration-tracking/plugin` maps to [`src/plugin.ts`](src/plugin.ts)",
   );
+  expect(guide).toContain("## Source root and ambient ownership");
+  expect(existsSync(join(root, "src/types/bun-sqlite.d.ts"))).toBe(true);
+  expect(existsSync(join(root, "tests/types/bun-test.d.ts"))).toBe(true);
+  expect(existsSync(join(root, "src/bun-sqlite.d.ts"))).toBe(false);
+  expect(existsSync(join(root, "src/bun-test.d.ts"))).toBe(false);
+
+  const sqliteAmbient = readFileSync(join(root, "src/types/bun-sqlite.d.ts"), "utf8");
+  const testAmbient = readFileSync(join(root, "tests/types/bun-test.d.ts"), "utf8");
+  expect(sqliteAmbient).toContain("changes: number;");
+  expect(sqliteAmbient).not.toContain("lastInsertRowid");
+  expect(testAmbient).toContain("export function test");
+  expect(testAmbient).not.toContain("export function describe");
   expect(readme).toContain("[ARCHITECTURE.md](ARCHITECTURE.md)");
   expect(readme).not.toContain("src/hub.ts");
 });

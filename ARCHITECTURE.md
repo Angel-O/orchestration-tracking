@@ -22,6 +22,16 @@ layers. Internal paths such as [`src/tracking/`](src/tracking/),
 package paths unless a separate explicit contract adds them. Do not add
 directory barrel files or new package exports to make internal imports public.
 
+## Source root and ambient ownership
+
+Only [`src/index.ts`](src/index.ts) and [`src/plugin.ts`](src/plugin.ts) are
+direct files under `src/`; they are the two package entry points. Source-owned
+ambient declarations live under [`src/types/`](src/types/), and test-only
+ambient declarations live under [`tests/types/`](tests/types/). The existing
+`src/**/*.ts` and `tests/**/*.ts` include globs discover those declarations, so
+do not add `typeRoots`, triple-slash references, imports, barrels, or
+dependencies for them.
+
 ## Modules and dependency direction
 
 The package remains one TypeScript package with feature directories:
