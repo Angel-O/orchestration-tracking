@@ -61,8 +61,9 @@ function formatDuration(milliseconds: number): string {
   return `${days}d${hours % 24 ? ` ${hours % 24}h` : ""}`;
 }
 
+/** Display report timestamps in the viewing machine's local time zone. */
 function formatTime(value: number | null): string {
-  return value === null ? "—" : new Date(value).toISOString();
+  return value === null ? "—" : new Date(value).toLocaleString();
 }
 
 function percent(value: number): string {
