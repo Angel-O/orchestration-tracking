@@ -2,6 +2,7 @@ import { disposeTrackerFixture, trackerFixture as fixture } from "../support/tra
 import { expect, test } from "bun:test";
 import { buildReportModels } from "../../src/reporting/build.js";
 import { generateReport } from "../../src/reporting/artifacts.js";
+import { renderReportDetailHtml } from "../../src/reporting/html.js";
 import { renderReport } from "../../src/reporting/markdown.js";
 import { TrackerStore } from "../../src/tracking/store.js";
 import type { ReportSnapshot } from "../../src/tracking/models.js";
@@ -351,6 +352,103 @@ test("builds the current document and one clipped multi-segment report-detail pa
       repeatCount: 1,
     },
   ]);
+});
+
+test("keeps interleaved session-local passes in absolute timeline order", () => {
+  const timeline = [
+    {
+      sessionID: "worker-session",
+      actionID: "worker-1",
+      passNumber: 1,
+      observedRole: "worker",
+      phaseKey: "implementation",
+      phaseLabel: "Implementation",
+      startedAt: 10,
+      endedAt: 20,
+    },
+    {
+      sessionID: "review-session",
+      actionID: "review-1",
+      passNumber: 1,
+      observedRole: "reviewer",
+      phaseKey: "review",
+      phaseLabel: "Review",
+      startedAt: 30,
+      endedAt: 40,
+    },
+    {
+      sessionID: "integration-session",
+      actionID: "integration-1",
+      passNumber: 1,
+      observedRole: "integration",
+      phaseKey: "integration-validation",
+      phaseLabel: "Integration validation",
+      startedAt: 50,
+      endedAt: 60,
+    },
+    {
+      sessionID: "worker-session",
+      actionID: "worker-2",
+      passNumber: 2,
+      observedRole: "worker",
+      phaseKey: "implementation",
+      phaseLabel: "Implementation",
+      startedAt: 70,
+      endedAt: 80,
+    },
+  ] as const;
+  const snapshot: ReportSnapshot = {
+    sessions: [...new Set(timeline.map(({ sessionID }) => sessionID))].map((sessionID) => ({
+      sessionID,
+      parentSessionID: null,
+      projectLabel: "project-a",
+      firstObservedAt: 1,
+      lastObservedAt: 80,
+    })),
+    actions: timeline.map((action) => ({
+      ...action,
+      repeatEligible: false,
+      outcome: "completed" as const,
+      startReceiptID: null,
+    })),
+    slices: timeline.map((action, index) => ({
+      sliceID: index + 1,
+      actionID: action.actionID,
+      sessionID: action.sessionID,
+      beadID: "bead-a",
+      associationSource: "selection" as const,
+      startedAt: action.startedAt,
+      endedAt: action.endedAt,
+    })),
+    beads: [{ beadID: "bead-a", type: "feature", parentBeadID: null, validatedAt: 1 }],
+    associations: [],
+    closeouts: [],
+    sourceHighWaterMark: 80,
+  };
+
+  const detail = buildReportModels(snapshot, { bead: "bead-a" }, 100).reportDetail;
+  expect(
+    detail.passes.map(({ sessionID, passNumber, agent }) => [sessionID, passNumber, agent]),
+  ).toEqual([
+    ["worker-session", 1, "worker"],
+    ["review-session", 1, "reviewer"],
+    ["integration-session", 1, "integration"],
+    ["worker-session", 2, "worker"],
+  ]);
+  expect(detail.passes.filter(({ passNumber }) => passNumber === 1)).toHaveLength(3);
+  expect(detail.scale).toEqual({ startAt: 10, endAt: 80, durationMs: 70 });
+  const html = renderReportDetailHtml(detail);
+  expect(html).toContain(
+    "P&lt;n&gt; labels are session-local action ordinals: they restart independently for each session and are not global workflow rounds.",
+  );
+  const labels = [
+    "worker-session; session-local action ordinal P1; Implementation; worker",
+    "review-session; session-local action ordinal P1; Review; reviewer",
+    "integration-session; session-local action ordinal P1; Integration validation; integration",
+    "worker-session; session-local action ordinal P2; Implementation; worker",
+  ].map((label) => html.indexOf(`aria-label="${label}`));
+  expect(labels.every((index) => index >= 0)).toBe(true);
+  expect(labels[0]! < labels[1]! && labels[1]! < labels[2]! && labels[2]! < labels[3]!).toBe(true);
 });
 
 test("the pure builder validates selector shape while preserving explicit empty and unknown sessions", () => {

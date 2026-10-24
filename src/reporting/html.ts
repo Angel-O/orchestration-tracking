@@ -104,13 +104,13 @@ function timelineSegments(pass: ReportDetailPass): string {
   return pass.segments
     .map(
       (segment) =>
-        `<div class="timeline-segment" role="img" aria-label="${escapeHtml(`${pass.phaseLabel}; ${pass.agent}; ${formatTime(segment.startedAt)}; ${formatTime(segment.endedAt)}`)}" style="left:${percent(segment.startPercent)}%;width:${percent(segment.widthPercent)}%;background:${escapeHtml(pass.color)}">P${escapeHtml(pass.passNumber)}</div>`,
+        `<div class="timeline-segment" role="img" aria-label="${escapeHtml(`${pass.sessionID}; session-local action ordinal P${pass.passNumber}; ${pass.phaseLabel}; ${pass.agent}; ${formatTime(segment.startedAt)}; ${formatTime(segment.endedAt)}`)}" style="left:${percent(segment.startPercent)}%;width:${percent(segment.widthPercent)}%;background:${escapeHtml(pass.color)}">P${escapeHtml(pass.passNumber)}</div>`,
     )
     .join("");
 }
 
 function bars(pass: ReportDetailPass, trackClass: string): string {
-  return `<div class="${trackClass}" aria-label="Timeline for pass ${escapeHtml(pass.passNumber)}">${timelineSegments(pass)}</div>`;
+  return `<div class="${trackClass}" aria-label="Timeline for ${escapeHtml(pass.sessionID)}, session-local action ordinal P${escapeHtml(pass.passNumber)}">${timelineSegments(pass)}</div>`;
 }
 
 function outcomeList(outcomes: OutcomeCounts): string {
@@ -254,7 +254,7 @@ export function renderReportDetailHtml(detail: ReportDetailModel): string {
     agentRows(detail),
     '</tbody></table><h2>Session lanes</h2><div class="legend" aria-label="Timeline legend"><strong>Timeline legend:</strong>',
     phaseLegend(detail),
-    '</div><p class="muted">Bars show pass timing and are not interactive controls. Discontiguous selected slices remain separate bars on their pass row.</p><h3>Session summary</h3><table><thead><tr><th>Session</th><th>Passes</th><th>Active time</th><th>Outcomes</th></tr></thead><tbody>',
+    '</div><p class="muted">P&lt;n&gt; labels are session-local action ordinals: they restart independently for each session and are not global workflow rounds. Bars show pass timing and are not interactive controls. Discontiguous selected slices remain separate bars on their pass row.</p><h3>Session summary</h3><table><thead><tr><th>Session</th><th>Passes</th><th>Active time</th><th>Outcomes</th></tr></thead><tbody>',
     sessionRows(detail),
     '</tbody></table><h3>Phase segments / Session–Shared timeline</h3><div class="timeline-scroll"><table><thead><tr><th>Session</th><th>Shared timeline</th></tr></thead><tbody>',
     timelineRows(detail),
