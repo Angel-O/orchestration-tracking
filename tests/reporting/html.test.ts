@@ -137,6 +137,9 @@ test("renders report detail as escaped, self-contained HTML with truthful bars",
   expect(html).toContain("Summed child active time");
   expect(html).toContain("<h2>Timing</h2>");
   expect(html).toContain("Shared time scale:");
+  expect(html).toContain(
+    "P&lt;n&gt; labels are session-local action ordinals: they restart independently for each session and are not global workflow rounds.",
+  );
   expect(html).not.toContain("metric-grid");
   expect(html).toMatch(
     /<h3>Phase segments \/ Session–Shared timeline<\/h3><div class="timeline-scroll"><table><thead><tr><th>Session<\/th><th>Shared timeline<\/th><\/tr>/u,
@@ -160,6 +163,10 @@ test("renders report detail as escaped, self-contained HTML with truthful bars",
   expect(html).not.toContain("<epic");
   expect(passCell).toContain("left:0%;width:25%;");
   expect(passCell).toContain("left:75%;width:25%;");
+  expect(passCell).toContain(
+    'aria-label="Timeline for session&lt;&amp;, session-local action ordinal P7"',
+  );
+  expect(passCell).toContain("session&lt;&amp;; session-local action ordinal P7;");
   expect((passCell.match(/class="timeline-segment"/g) ?? []).length).toBe(2);
 });
 

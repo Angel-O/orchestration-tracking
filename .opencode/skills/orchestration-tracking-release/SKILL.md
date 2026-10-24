@@ -29,7 +29,6 @@ git rev-parse --verify "$MERGED_COMMIT^{commit}"
 git merge-base --is-ancestor "$MERGED_COMMIT" origin/main
 VERSION="$(git show "$MERGED_COMMIT:package.json" | node -e 'let s=""; process.stdin.on("data", d => s += d).on("end", () => process.stdout.write(JSON.parse(s).version))')"
 test -n "$VERSION"
-test "$VERSION" = "0.3.3"
 TAG="v$VERSION"
 PREFIX="orchestration-tracking-$VERSION"
 ARCHIVE="$PREFIX.tar.gz"
@@ -76,12 +75,15 @@ contains the expected project files and no path outside
 ## Publish the GitHub release
 
 After verifying the tag and archive, publish the release with a concise
-Highlights section and attach the archive:
+release-specific Highlights section and attach the archive. Set
+`RELEASE_HIGHLIGHTS` to the content for this release; the command refuses an
+unset or empty value:
 
 ```sh
-gh release create "$TAG" "$ARCHIVE" --title "$TAG" --notes '## Highlights
+test -n "${RELEASE_HIGHLIGHTS:-}"
+gh release create "$TAG" "$ARCHIVE" --title "$TAG" --notes "## Highlights
 
-- HTML reports display visible timestamps in the viewing machine’s local time zone.'
+$RELEASE_HIGHLIGHTS"
 ```
 
 Verify the published release title, notes, tag, and attached archive with
