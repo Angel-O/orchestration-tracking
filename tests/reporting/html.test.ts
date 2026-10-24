@@ -173,6 +173,82 @@ test("renders report detail as escaped, self-contained HTML with truthful bars",
   expect((passCell.match(/class="timeline-segment"/g) ?? []).length).toBe(2);
 });
 
+test("summarizes phases with distinct agent passes, union time, and shared-axis gaps", () => {
+  const html = renderReportDetailHtml({
+    ...detail,
+    kind: "child",
+    phases: [{ ...detail.phases[0]!, passCount: 3 }],
+    passes: [
+      ...detail.passes,
+      {
+        ...detail.passes[0]!,
+        passNumber: 8,
+        sessionID: "other",
+        actionID: "second",
+        agent: "worker<&",
+        startedAt: 5,
+        endedAt: 35,
+        activeMs: 10,
+        segments: [
+          {
+            sliceID: 3,
+            startedAt: 5,
+            endedAt: 10,
+            activeMs: 5,
+            startPercent: 12.5,
+            endPercent: 25,
+            widthPercent: 12.5,
+          },
+          {
+            sliceID: 5,
+            startedAt: 30,
+            endedAt: 35,
+            activeMs: 5,
+            startPercent: 75,
+            endPercent: 87.5,
+            widthPercent: 12.5,
+          },
+        ],
+      },
+      {
+        ...detail.passes[0]!,
+        passNumber: 1,
+        sessionID: "third",
+        actionID: "third",
+        agent: "reviewer",
+        startedAt: 10,
+        endedAt: 15,
+        activeMs: 5,
+        segments: [
+          {
+            sliceID: 4,
+            startedAt: 10,
+            endedAt: 15,
+            activeMs: 5,
+            startPercent: 25,
+            endPercent: 37.5,
+            widthPercent: 12.5,
+          },
+        ],
+      },
+    ],
+  });
+  const summaryStart = html.indexOf("<h3>Phase summary</h3>");
+  const detailedStart = html.indexOf("<h3>Phase segments / Session–Shared timeline</h3>");
+  const summary = html.slice(summaryStart, detailedStart);
+
+  expect(summary).toContain(
+    '<td><span class="swatch" style="background:#cfe8ff" aria-hidden="true"></span>Captured implementation &lt;&amp;</td><td>25 ms</td><td class="segments"><div class="muted">worker&lt;&amp; (2), reviewer (1)</div>',
+  );
+  expect(summary).toContain("worker&lt;&amp; (2), reviewer (1)");
+  expect(summary).toContain("25 ms");
+  expect(summary).toContain("left:0%;width:25%;");
+  expect(summary).toContain("left:75%;width:25%;");
+  expect((summary.match(/class="timeline-segment"/g) ?? []).length).toBe(5);
+  expect(html.indexOf("<h3>Phase summary</h3>") < detailedStart).toBe(true);
+  expect(html.slice(detailedStart).includes("<th>Session</th>")).toBe(true);
+});
+
 test("leaves active time unknown for incomplete timeline passes", () => {
   const html = renderReportDetailHtml({
     ...detail,

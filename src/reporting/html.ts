@@ -182,6 +182,45 @@ function timelineRows(detail: ReportDetailModel): string {
     .join("");
 }
 
+function phaseTimelineRows(detail: ReportDetailModel): string {
+  if (detail.phases.length === 0) return '<tr><td colspan="3">None</td></tr>';
+  return detail.phases
+    .map((phase) => {
+      const passes = detail.passes.filter((pass) => pass.phaseKey === phase.phaseKey);
+      const agents = new Map<string, number>();
+      for (const pass of passes) agents.set(pass.agent, (agents.get(pass.agent) ?? 0) + 1);
+      const segments = passes
+        .flatMap((pass) => pass.segments)
+        .filter((segment) => segment.endedAt !== null)
+        .sort((a, b) => a.startedAt - b.startedAt || a.endedAt! - b.endedAt!);
+      let activeMs = 0;
+      let start: number | null = null;
+      let end: number | null = null;
+      for (const segment of segments) {
+        if (start === null) {
+          start = segment.startedAt;
+          end = segment.endedAt;
+        } else if (segment.startedAt <= end!) end = Math.max(end!, segment.endedAt!);
+        else {
+          activeMs += end! - start;
+          start = segment.startedAt;
+          end = segment.endedAt;
+        }
+      }
+      if (start !== null) activeMs += end! - start;
+      const bars = segments
+        .map(
+          (segment) =>
+            `<div class="timeline-segment" role="img" aria-label="${escapeHtml(`${phase.phaseLabel}; ${formatTime(segment.startedAt)}; ${formatTime(segment.endedAt)}`)}" style="left:${percent(segment.startPercent)}%;width:${percent(segment.widthPercent)}%;background:${escapeHtml(phase.color)}"></div>`,
+        )
+        .join("");
+      const participants =
+        [...agents].map(([agent, count]) => `${agent} (${count})`).join(", ") || "—";
+      return `<tr><td>${phaseSwatch(phase.color)}${escapeHtml(phase.phaseLabel)}</td><td>${escapeHtml(formatDuration(activeMs))}</td><td class="segments"><div class="muted">${escapeHtml(participants)}</div><div class="lane-track" aria-label="${escapeHtml(`${phase.phaseLabel} shared timeline`)}">${bars}</div></td></tr>`;
+    })
+    .join("");
+}
+
 function directPhaseRows(detail: ReportDetailModel): string {
   const rows = PHASES.filter((phase) => detail.phaseTotals[phase].actionCount > 0).map((phase) => {
     const metric = detail.phaseTotals[phase];
@@ -257,7 +296,9 @@ export function renderReportDetailHtml(detail: ReportDetailModel): string {
     phaseLegend(detail),
     '</div><p class="muted">P&lt;n&gt; labels are session-local action ordinals: they restart independently for each session and are not global workflow rounds. Bars show pass timing and are not interactive controls. Discontiguous selected slices remain separate bars on their pass row.</p><h3>Session summary</h3><table><thead><tr><th>Session</th><th>Passes</th><th>Active time</th><th>Outcomes</th></tr></thead><tbody>',
     sessionRows(detail),
-    '</tbody></table><h3>Phase segments / Session–Shared timeline</h3><div class="timeline-scroll"><table><thead><tr><th>Session</th><th>Active time</th><th>Shared timeline</th></tr></thead><tbody>',
+    '</tbody></table><h3>Phase summary</h3><div class="timeline-scroll"><table><thead><tr><th>Phase</th><th>Active time</th><th>Shared timeline</th></tr></thead><tbody>',
+    phaseTimelineRows(detail),
+    '</tbody></table></div><h3>Phase segments / Session–Shared timeline</h3><div class="timeline-scroll"><table><thead><tr><th>Session</th><th>Active time</th><th>Shared timeline</th></tr></thead><tbody>',
     timelineRows(detail),
     "</tbody></table></div><h2>Passes</h2><table><thead><tr><th>Session</th><th>Observed agent</th><th>Phase</th><th>Pass</th><th>Start</th><th>End</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>",
     passRows(detail),
