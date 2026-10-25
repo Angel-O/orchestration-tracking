@@ -221,6 +221,38 @@ function phaseTimelineRows(detail: ReportDetailModel): string {
     .join("");
 }
 
+function phaseTimelineAxis(detail: ReportDetailModel): string {
+  if (detail.scale.startAt === null || detail.scale.endAt === null) return "";
+  const keepSeconds = detail.scale.durationMs < 60_000;
+  const elapsedLabel = (milliseconds: number): string => {
+    if (keepSeconds) return formatDuration(milliseconds);
+    const totalMinutes = Math.floor(milliseconds / 60_000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return hours === 0 ? `${totalMinutes}m` : `${hours}h${minutes ? ` ${minutes}m` : ""}`;
+  };
+  const end = elapsedLabel(detail.scale.durationMs);
+  const intervalCount = 10;
+  const labels = Array.from({ length: intervalCount + 1 }, (_, index) => {
+    const isStart = index === 0;
+    const isEnd = index === intervalCount;
+    const position = (index / intervalCount) * 100;
+    const label = isStart
+      ? "0"
+      : elapsedLabel(
+          isEnd ? detail.scale.durationMs : (detail.scale.durationMs * index) / intervalCount,
+        );
+    const classes = isStart
+      ? "axis-start"
+      : isEnd
+        ? "axis-end"
+        : `axis-intermediate${index === intervalCount / 2 ? " axis-narrow" : ""}`;
+    const style = isStart || isEnd ? "" : ` style="left:${position}%"`;
+    return `<span class="axis-label ${classes}" data-gridline="${position}%"${style}>${escapeHtml(label)}</span>`;
+  }).join("");
+  return `<tfoot><tr><td></td><td></td><td class="segments"><div class="phase-axis-track" role="img" aria-label="Elapsed time from 0 to ${escapeHtml(end)}">${labels}</div></td></tr></tfoot>`;
+}
+
 function directPhaseRows(detail: ReportDetailModel): string {
   const rows = PHASES.filter((phase) => detail.phaseTotals[phase].actionCount > 0).map((phase) => {
     const metric = detail.phaseTotals[phase];
@@ -282,7 +314,8 @@ export function renderReportDetailHtml(detail: ReportDetailModel): string {
 
   return [
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orchestration tracker report</title><style>',
-    "body{font:15px system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#202124;background:#fff}h1{font-size:1.7rem}h2{margin-top:2rem}table{border-collapse:collapse;width:100%;margin:1rem 0 2rem}th,td{border:1px solid #ccc;padding:.45rem;text-align:left;vertical-align:top}th{background:#f1f3f4}.muted{color:#5f6368}ul{padding-left:1.4rem}.swatch{display:inline-block;width:.8rem;height:.8rem;margin-right:.35rem;border:1px solid #888;vertical-align:middle}.legend{display:flex;flex-wrap:wrap;gap:.75rem;margin:.75rem 0;color:#3c4043}.legend-item{white-space:nowrap}.timeline-scroll{overflow-x:auto}.segments{min-width:18rem}.pass-label{margin-bottom:.25rem}.lane-track,.pass-track{position:relative;height:1.4rem;background:repeating-linear-gradient(90deg,#f8f9fa 0,#f8f9fa 9.9%,#e8eaed 10%,#e8eaed 10.2%);border:1px solid #9aa0a6;margin:.15rem 0}.pass-track{min-width:18rem}.timeline-segment{position:absolute;top:.15rem;height:1rem;box-sizing:border-box;padding:0 .2rem;overflow:hidden;white-space:nowrap;border:0;border-left:3px solid #3c4043;font-size:.8rem;color:#202124}.notice{border-left:3px solid #9aa0a6;padding-left:.7rem}",
+    "body{font:15px system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#202124;background:#fff}h1{font-size:1.7rem}h2{margin-top:2rem}table{border-collapse:collapse;width:100%;margin:1rem 0 2rem}th,td{border:1px solid #ccc;padding:.45rem;text-align:left;vertical-align:top}th{background:#f1f3f4}.muted{color:#5f6368}ul{padding-left:1.4rem}.swatch{display:inline-block;width:.8rem;height:.8rem;margin-right:.35rem;border:1px solid #888;vertical-align:middle}.legend{display:flex;flex-wrap:wrap;gap:.75rem;margin:.75rem 0;color:#3c4043}.legend-item{white-space:nowrap}.timeline-scroll{overflow-x:auto}.segments{min-width:18rem}.pass-label{margin-bottom:.25rem}.lane-track,.pass-track{position:relative;height:1.4rem;background:repeating-linear-gradient(90deg,#f8f9fa 0,#f8f9fa 9.8%,#e8eaed 9.8%,#e8eaed 10%);border:1px solid #9aa0a6;margin:.15rem 0}.pass-track{min-width:18rem}.timeline-segment{position:absolute;top:.15rem;height:1rem;box-sizing:border-box;padding:0 .2rem;overflow:hidden;white-space:nowrap;border:0;border-left:3px solid #3c4043;font-size:.8rem;color:#202124}.notice{border-left:3px solid #9aa0a6;padding-left:.7rem}",
+    ".phase-axis-track{position:relative;height:1.4rem;background:repeating-linear-gradient(90deg,#f8f9fa 0,#f8f9fa 9.8%,#e8eaed 9.8%,#e8eaed 10%);border-top:1px solid #9aa0a6}.axis-label{position:absolute;top:.1rem;white-space:nowrap;font-size:.8rem;color:#3c4043;background:#fff}.axis-start{left:0}.axis-intermediate{transform:translateX(-50%)}.axis-end{right:0}@media(max-width:40rem){.axis-intermediate{display:none}.axis-narrow{display:block}}",
     '</style></head><body><h1>Orchestration tracker report</h1><p class="muted">Private local report; contains only tracker summaries and no network assets.</p>',
     "<h2>Scope and selection</h2><dl>",
     `<dt>Scope</dt><dd>${escapeHtml(detail.kind)}</dd><dt>Bead</dt><dd>${escapeHtml(detail.beadID ?? "session scope")}</dd><dt>Project</dt><dd>${escapeHtml(project)}</dd><dt>Status</dt><dd>${escapeHtml(detail.status)}</dd><dt>Selection</dt><dd>${selection(detail)}</dd><dt>Generated</dt><dd>${escapeHtml(formatTime(detail.generatedAt))}</dd><dt>Finalized</dt><dd>${escapeHtml(formatTime(detail.finalizedAt))}</dd></dl>`,
@@ -298,7 +331,7 @@ export function renderReportDetailHtml(detail: ReportDetailModel): string {
     sessionRows(detail),
     '</tbody></table><h3>Phase summary</h3><div class="timeline-scroll"><table><thead><tr><th>Phase</th><th>Active time</th><th>Shared timeline</th></tr></thead><tbody>',
     phaseTimelineRows(detail),
-    '</tbody></table></div><h3>Phase segments / Session–Shared timeline</h3><div class="timeline-scroll"><table><thead><tr><th>Session</th><th>Active time</th><th>Shared timeline</th></tr></thead><tbody>',
+    `</tbody>${phaseTimelineAxis(detail)}</table></div><h3>Phase segments / Session–Shared timeline</h3><div class="timeline-scroll"><table><thead><tr><th>Session</th><th>Active time</th><th>Shared timeline</th></tr></thead><tbody>`,
     timelineRows(detail),
     "</tbody></table></div><h2>Passes</h2><table><thead><tr><th>Session</th><th>Observed agent</th><th>Phase</th><th>Pass</th><th>Start</th><th>End</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>",
     passRows(detail),

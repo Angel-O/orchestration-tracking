@@ -9,6 +9,6 @@ test("package and reporting policy metadata identify the next minor behavior rel
     readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../package.json"), "utf8"),
   ) as { version?: string };
 
-  expect(packageJSON.version).toBe("0.5.0");
+  expect(packageJSON.version).toBe("0.7.0");
   expect(REPORTING_POLICY_VERSION).toBe("session-attribution-v2");
 });

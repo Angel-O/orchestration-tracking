@@ -249,6 +249,71 @@ test("summarizes phases with distinct agent passes, union time, and shared-axis 
   expect(html.slice(detailedStart).includes("<th>Session</th>")).toBe(true);
 });
 
+test("renders elapsed references at every shared gridline in a blank-column footer", () => {
+  const html = renderReportDetailHtml({
+    ...detail,
+    scale: { startAt: 10_000, endAt: 7_270_000, durationMs: 7_260_000 },
+  });
+  const summaryStart = html.indexOf("<h3>Phase summary</h3>");
+  const summaryEnd = html.indexOf("<h3>Phase segments / Session–Shared timeline</h3>");
+  const summary = html.slice(summaryStart, summaryEnd);
+
+  expect(summary).toContain(
+    '<tfoot><tr><td></td><td></td><td class="segments"><div class="phase-axis-track" role="img" aria-label="Elapsed time from 0 to 2h 1m">',
+  );
+  const labels = [
+    ...summary.matchAll(
+      /<span class="axis-label ([^"]+)" data-gridline="([^"]+)"(?: style="left:([^"]+)")?>([^<]+)<\/span>/gu,
+    ),
+  ];
+  expect(labels.map(([, , gridline, left, label]) => [gridline, left ?? null, label])).toEqual([
+    ["0%", null, "0"],
+    ["10%", "10%", "12m"],
+    ["20%", "20%", "24m"],
+    ["30%", "30%", "36m"],
+    ["40%", "40%", "48m"],
+    ["50%", "50%", "1h"],
+    ["60%", "60%", "1h 12m"],
+    ["70%", "70%", "1h 24m"],
+    ["80%", "80%", "1h 36m"],
+    ["90%", "90%", "1h 48m"],
+    ["100%", null, "2h 1m"],
+  ]);
+  expect(html).toContain(".axis-intermediate{transform:translateX(-50%)}");
+  expect(html).toContain(
+    "@media(max-width:40rem){.axis-intermediate{display:none}.axis-narrow{display:block}}",
+  );
+  expect(
+    html.match(
+      /repeating-linear-gradient\(90deg,#f8f9fa 0,#f8f9fa 9\.8%,#e8eaed 9\.8%,#e8eaed 10%\)/gu,
+    ),
+  ).toHaveLength(2);
+  expect(html).not.toContain("10.2%");
+  expect(summary.indexOf('class="phase-axis-track"') > summary.indexOf('class="lane-track"')).toBe(
+    true,
+  );
+
+  const minuteHtml = renderReportDetailHtml({
+    ...detail,
+    scale: { startAt: 0, endAt: 300_000, durationMs: 300_000 },
+  });
+  expect(minuteHtml).toContain('data-gridline="10%" style="left:10%">0m</span>');
+
+  const shortHtml = renderReportDetailHtml({
+    ...detail,
+    scale: { startAt: 0, endAt: 40_000, durationMs: 40_000 },
+  });
+  const shortSummary = shortHtml.slice(
+    shortHtml.indexOf("<h3>Phase summary</h3>"),
+    shortHtml.indexOf("<h3>Phase segments / Session–Shared timeline</h3>"),
+  );
+  expect(
+    [
+      ...shortSummary.matchAll(/data-gridline="[^"]+"(?: style="left:[^"]+")?>([^<]+)<\/span>/gu),
+    ].map(([, label]) => label),
+  ).toEqual(["0", "4 s", "8 s", "12 s", "16 s", "20 s", "24 s", "28 s", "32 s", "36 s", "40 s"]);
+});
+
 test("leaves active time unknown for incomplete timeline passes", () => {
   const html = renderReportDetailHtml({
     ...detail,
