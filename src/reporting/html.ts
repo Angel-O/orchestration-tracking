@@ -232,21 +232,22 @@ function phaseTimelineAxis(detail: ReportDetailModel): string {
     return hours === 0 ? `${totalMinutes}m` : `${hours}h${minutes ? ` ${minutes}m` : ""}`;
   };
   const end = elapsedLabel(detail.scale.durationMs);
-  const labels = Array.from({ length: 11 }, (_, index) => {
-    const label =
-      index === 0
-        ? "0"
-        : elapsedLabel(
-            index === 10 ? detail.scale.durationMs : (detail.scale.durationMs * index) / 10,
-          );
-    const position = index * 10;
-    const classes =
-      index === 0
-        ? "axis-start"
-        : index === 10
-          ? "axis-end"
-          : `axis-intermediate${index === 5 ? " axis-narrow" : ""}`;
-    const style = index === 0 || index === 10 ? "" : ` style="left:${position}%"`;
+  const intervalCount = 10;
+  const labels = Array.from({ length: intervalCount + 1 }, (_, index) => {
+    const isStart = index === 0;
+    const isEnd = index === intervalCount;
+    const position = (index / intervalCount) * 100;
+    const label = isStart
+      ? "0"
+      : elapsedLabel(
+          isEnd ? detail.scale.durationMs : (detail.scale.durationMs * index) / intervalCount,
+        );
+    const classes = isStart
+      ? "axis-start"
+      : isEnd
+        ? "axis-end"
+        : `axis-intermediate${index === intervalCount / 2 ? " axis-narrow" : ""}`;
+    const style = isStart || isEnd ? "" : ` style="left:${position}%"`;
     return `<span class="axis-label ${classes}" data-gridline="${position}%"${style}>${escapeHtml(label)}</span>`;
   }).join("");
   return `<tfoot><tr><td></td><td></td><td class="segments"><div class="phase-axis-track" role="img" aria-label="Elapsed time from 0 to ${escapeHtml(end)}">${labels}</div></td></tr></tfoot>`;
