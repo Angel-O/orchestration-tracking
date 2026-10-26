@@ -170,6 +170,8 @@ failures are content-free diagnostics and do not block OpenCode delivery.
 
 ## Development
 
+Development uses Bun 1.4.4.
+
 Maintainer-facing package boundaries are documented in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 

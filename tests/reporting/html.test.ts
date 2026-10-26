@@ -331,8 +331,26 @@ test("renders generated and finalized timestamps in local time", () => {
   const finalizedAt = Date.parse("2025-06-16T01:23:45.678Z");
   const html = renderReportDetailHtml({ ...detail, generatedAt, finalizedAt });
 
-  expect(html).toContain(`<dt>Generated</dt><dd>${new Date(generatedAt).toLocaleString()}</dd>`);
-  expect(html).toContain(`<dt>Finalized</dt><dd>${new Date(finalizedAt).toLocaleString()}</dd>`);
+  expect(html).toContain(
+    `<p class="report-meta muted">Report generated: ${new Date(generatedAt).toLocaleString()}</p>`,
+  );
+  expect(html).toContain(
+    `<dt>Closeout recorded</dt><dd>${new Date(finalizedAt).toLocaleString()}</dd>`,
+  );
+  expect(html.indexOf('class="report-meta muted"') > html.indexOf("</dl>")).toBe(true);
+  expect(html).toContain(
+    '<dl class="scope-details"><dt>Scope</dt><dd>epic</dd><dt>Bead</dt><dd>epic&lt;&amp;&quot;</dd>',
+  );
+  expect(html).toContain(
+    ".scope-details{display:grid;grid-template-columns:minmax(7rem,9rem) minmax(0,1fr)",
+  );
+  expect(html).toContain(".outcomes{display:flex;flex-wrap:wrap;gap:.25rem .75rem");
+  expect(html).toContain(
+    '<div class="outcomes"><span class="outcome">open: 0</span><span class="outcome">completed: 1</span><span class="outcome">failed: 0</span><span class="outcome">interrupted: 0</span><span class="outcome">incomplete: 0</span></div>',
+  );
+  expect(html).toContain(
+    '<ul class="outcomes"><li class="outcome">open: 0</li><li class="outcome">completed: 1</li><li class="outcome">failed: 0</li><li class="outcome">interrupted: 0</li><li class="outcome">incomplete: 0</li></ul>',
+  );
   expect(html).not.toContain(new Date(generatedAt).toISOString());
   expect(html).not.toContain(new Date(finalizedAt).toISOString());
 });
