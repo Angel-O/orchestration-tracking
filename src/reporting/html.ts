@@ -115,15 +115,16 @@ function bars(pass: ReportDetailPass, trackClass: string): string {
 
 function outcomeList(outcomes: OutcomeCounts): string {
   return OUTCOMES.map(
-    (outcome) => `<li>${escapeHtml(outcome)}: ${escapeHtml(outcomes[outcome])}</li>`,
+    (outcome) =>
+      `<li class="outcome">${escapeHtml(outcome)}: ${escapeHtml(outcomes[outcome])}</li>`,
   ).join("");
 }
 
 function outcomeLabels(outcomes: OutcomeCounts): string {
-  return OUTCOMES.map(
+  return `<div class="outcomes">${OUTCOMES.map(
     (outcome) =>
       `<span class="outcome">${escapeHtml(outcome)}: ${escapeHtml(outcomes[outcome])}</span>`,
-  ).join("");
+  ).join("")}</div>`;
 }
 
 function phaseRows(detail: ReportDetailModel): string {
@@ -314,11 +315,11 @@ export function renderReportDetailHtml(detail: ReportDetailModel): string {
 
   return [
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orchestration tracker report</title><style>',
-    "body{font:15px system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#202124;background:#fff}h1{font-size:1.7rem}h2{margin-top:2rem}table{border-collapse:collapse;width:100%;margin:1rem 0 2rem}th,td{border:1px solid #ccc;padding:.45rem;text-align:left;vertical-align:top}th{background:#f1f3f4}.muted{color:#5f6368}ul{padding-left:1.4rem}.swatch{display:inline-block;width:.8rem;height:.8rem;margin-right:.35rem;border:1px solid #888;vertical-align:middle}.legend{display:flex;flex-wrap:wrap;gap:.75rem;margin:.75rem 0;color:#3c4043}.legend-item{white-space:nowrap}.timeline-scroll{overflow-x:auto}.segments{min-width:18rem}.pass-label{margin-bottom:.25rem}.lane-track,.pass-track{position:relative;height:1.4rem;background:repeating-linear-gradient(90deg,#f8f9fa 0,#f8f9fa 9.8%,#e8eaed 9.8%,#e8eaed 10%);border:1px solid #9aa0a6;margin:.15rem 0}.pass-track{min-width:18rem}.timeline-segment{position:absolute;top:.15rem;height:1rem;box-sizing:border-box;padding:0 .2rem;overflow:hidden;white-space:nowrap;border:0;border-left:3px solid #3c4043;font-size:.8rem;color:#202124}.notice{border-left:3px solid #9aa0a6;padding-left:.7rem}",
+    "body{font:15px system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#202124;background:#fff}h1{font-size:1.7rem}h2{margin-top:2rem}table{border-collapse:collapse;width:100%;margin:1rem 0 2rem}th,td{border:1px solid #ccc;padding:.45rem;text-align:left;vertical-align:top}th{background:#f1f3f4}.muted{color:#5f6368}ul{padding-left:1.4rem}.scope-details{display:grid;grid-template-columns:minmax(7rem,9rem) minmax(0,1fr);gap:.4rem 1rem}.scope-details dd{margin:0;overflow-wrap:anywhere}.report-meta{font-size:.9rem;margin:.5rem 0 1.5rem}.outcomes{display:flex;flex-wrap:wrap;gap:.25rem .75rem;list-style:none;padding:0}.outcome{white-space:nowrap}.swatch{display:inline-block;width:.8rem;height:.8rem;margin-right:.35rem;border:1px solid #888;vertical-align:middle}.legend{display:flex;flex-wrap:wrap;gap:.75rem;margin:.75rem 0;color:#3c4043}.legend-item{white-space:nowrap}.timeline-scroll{overflow-x:auto}.segments{min-width:18rem}.pass-label{margin-bottom:.25rem}.lane-track,.pass-track{position:relative;height:1.4rem;background:repeating-linear-gradient(90deg,#f8f9fa 0,#f8f9fa 9.8%,#e8eaed 9.8%,#e8eaed 10%);border:1px solid #9aa0a6;margin:.15rem 0}.pass-track{min-width:18rem}.timeline-segment{position:absolute;top:.15rem;height:1rem;box-sizing:border-box;padding:0 .2rem;overflow:hidden;white-space:nowrap;border:0;border-left:3px solid #3c4043;font-size:.8rem;color:#202124}.notice{border-left:3px solid #9aa0a6;padding-left:.7rem}",
     ".phase-axis-track{position:relative;height:1.4rem;background:repeating-linear-gradient(90deg,#f8f9fa 0,#f8f9fa 9.8%,#e8eaed 9.8%,#e8eaed 10%);border-top:1px solid #9aa0a6}.axis-label{position:absolute;top:.1rem;white-space:nowrap;font-size:.8rem;color:#3c4043;background:#fff}.axis-start{left:0}.axis-intermediate{transform:translateX(-50%)}.axis-end{right:0}@media(max-width:40rem){.axis-intermediate{display:none}.axis-narrow{display:block}}",
     '</style></head><body><h1>Orchestration tracker report</h1><p class="muted">Private local report; contains only tracker summaries and no network assets.</p>',
-    "<h2>Scope and selection</h2><dl>",
-    `<dt>Scope</dt><dd>${escapeHtml(detail.kind)}</dd><dt>Bead</dt><dd>${escapeHtml(detail.beadID ?? "session scope")}</dd><dt>Project</dt><dd>${escapeHtml(project)}</dd><dt>Status</dt><dd>${escapeHtml(detail.status)}</dd><dt>Selection</dt><dd>${selection(detail)}</dd><dt>Generated</dt><dd>${escapeHtml(formatTime(detail.generatedAt))}</dd><dt>Finalized</dt><dd>${escapeHtml(formatTime(detail.finalizedAt))}</dd></dl>`,
+    '<h2>Scope and selection</h2><dl class="scope-details">',
+    `<dt>Scope</dt><dd>${escapeHtml(detail.kind)}</dd><dt>Bead</dt><dd>${escapeHtml(detail.beadID ?? "session scope")}</dd><dt>Project</dt><dd>${escapeHtml(project)}</dd><dt>Status</dt><dd>${escapeHtml(detail.status)}</dd><dt>Selection</dt><dd>${selection(detail)}</dd><dt>Closeout recorded</dt><dd>${escapeHtml(formatTime(detail.finalizedAt))}</dd></dl><p class="report-meta muted">Report generated: ${escapeHtml(formatTime(detail.generatedAt))}</p>`,
     "<h2>Timing</h2>",
     `<p>Shared time scale: ${escapeHtml(formatTime(detail.scale.startAt))} → ${escapeHtml(formatTime(detail.scale.endAt))}. Window: ${escapeHtml(formatDuration(detail.durations.elapsedMs))} elapsed; ${escapeHtml(formatDuration(detail.durations.activeMs))} summed active pass time.</p>`,
     "<h2>Phases</h2><table><thead><tr><th>Phase</th><th>Observed agents</th><th>Passes</th><th>Active time</th></tr></thead><tbody>",
@@ -335,6 +336,6 @@ export function renderReportDetailHtml(detail: ReportDetailModel): string {
     timelineRows(detail),
     "</tbody></table></div><h2>Passes</h2><table><thead><tr><th>Session</th><th>Observed agent</th><th>Phase</th><th>Pass</th><th>Start</th><th>End</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>",
     passRows(detail),
-    `</tbody></table><h2>Outcomes</h2><ul>${outcomeList(metrics.outcomes)}</ul>${epicDetail}<h2>Repeat signals</h2><p class="muted">Repeated passes are diagnostic, not proof of poor scoping.</p><ul>${repeatRows(detail)}</ul><h2>Warnings</h2><ul>${warningRows}</ul><p class="notice">Incomplete: ${escapeHtml(detail.incomplete)}; unmapped: ${escapeHtml(detail.unmapped)}.</p></body></html>`,
+    `</tbody></table><h2>Outcomes</h2><ul class="outcomes">${outcomeList(metrics.outcomes)}</ul>${epicDetail}<h2>Repeat signals</h2><p class="muted">Repeated passes are diagnostic, not proof of poor scoping.</p><ul>${repeatRows(detail)}</ul><h2>Warnings</h2><ul>${warningRows}</ul><p class="notice">Incomplete: ${escapeHtml(detail.incomplete)}; unmapped: ${escapeHtml(detail.unmapped)}.</p></body></html>`,
   ].join("");
 }
