@@ -111,25 +111,37 @@ function phaseFor(
   inherit = true,
 ): { phase: ReportPhase; warning: boolean } {
   if (!bead) return { phase: "unclassified", warning: true };
+  if (
+    action.observedRole === "test-scope-reviewer" ||
+    action.observedRole === "scope-complexity-reviewer"
+  )
+    return { phase: "internal-gate", warning: false };
+  if (action.observedRole === "unknown") return { phase: "unclassified", warning: true };
+  if (action.observedRole === "reviewer") {
+    const current = sessions.find((session) => session.sessionID === action.sessionID);
+    const parent = current?.parentSessionID
+      ? sessions.find((session) => session.sessionID === current.parentSessionID)
+      : undefined;
+    const parentRole =
+      parent && actions.find((candidate) => candidate.sessionID === parent.sessionID)?.observedRole;
+    if (parentRole === "architect") return { phase: "scoping-decomposition", warning: false };
+  }
   const preCreation =
     slice.associationSource !== null &&
     ["creation", "inherited-lane"].includes(slice.associationSource) &&
     creationLineageSessions.has(`${slice.sessionID}:${bead.beadID}`) &&
     (creationBoundaries.get(bead.beadID) ?? Number.POSITIVE_INFINITY) > slice.startedAt;
   if (preCreation) {
-    if (bead.type === "epic" && ["architect", "planner", "plan"].includes(action.observedRole))
+    if (["architect", "plan"].includes(action.observedRole))
       return { phase: "scoping-decomposition", warning: false };
     if (bead.parentBeadID === null) return { phase: "scoping", warning: false };
   }
   if (bead.type === "epic") {
-    if (["architect", "planner", "plan"].includes(action.observedRole))
+    if (["architect", "plan"].includes(action.observedRole))
       return { phase: "scoping-decomposition", warning: false };
     if (action.observedRole === "orchestrator") return { phase: "coordination", warning: false };
-  } else if (
-    bead.parentBeadID !== null &&
-    ["architect", "planner", "plan"].includes(action.observedRole)
-  ) {
-    return { phase: "unclassified", warning: true };
+  } else if (action.observedRole === "architect") {
+    return { phase: "scoping-decomposition", warning: false };
   }
   const fixed: Partial<Record<string, ReportPhase>> = {
     orchestrator: "coordination",
@@ -412,10 +424,32 @@ function reportDetailPhaseColor(phaseKey: string): string {
   return REPORT_DETAIL_PHASE_COLORS[(hash >>> 0) % REPORT_DETAIL_PHASE_COLORS.length]!;
 }
 
+function displayedRole(
+  action: ActionRecord,
+  sessions: readonly SessionRecord[],
+  actions: readonly ActionRecord[],
+): string {
+  if (
+    action.observedRole !== "test-scope-reviewer" &&
+    action.observedRole !== "scope-complexity-reviewer"
+  )
+    return action.observedRole;
+  const parentSessionID = sessions.find(
+    (session) => session.sessionID === action.sessionID,
+  )?.parentSessionID;
+  return (
+    (parentSessionID
+      ? actions.find((candidate) => candidate.sessionID === parentSessionID)?.observedRole
+      : undefined) ?? (action.observedRole === "test-scope-reviewer" ? "worker" : "reviewer")
+  );
+}
+
 function buildReportDetail(
   entries: readonly Entry[],
   report: ReportDocument,
   closeouts: readonly CloseoutRecordView[],
+  sourceSessions: readonly SessionRecord[],
+  sourceActions: readonly ActionRecord[],
   now: number,
 ): ReportDetailModel {
   const actionEntries = new Map<string, Entry[]>();
@@ -483,7 +517,7 @@ function buildReportDetail(
       passNumber: first.action.passNumber,
       sessionID: first.action.sessionID,
       actionID: first.action.actionID,
-      agent: first.action.observedRole,
+      agent: displayedRole(first.action, sourceSessions, sourceActions),
       phaseKey: first.phase,
       phaseLabel: PHASE_LABELS[first.phase],
       color: reportDetailPhaseColor(first.phase),
@@ -527,7 +561,7 @@ function buildReportDetail(
       activeMs: (phase?.activeMs ?? 0) + pass.activeMs,
       passCount: phaseActionKeys.size,
     });
-    const agent = first.action.observedRole;
+    const agent = displayedRole(first.action, sourceSessions, sourceActions);
     const agentTotal = agents.get(agent);
     const agentActionKeys = agentPasses.get(agent) ?? new Set<string>();
     agentActionKeys.add(actionKey);
@@ -557,7 +591,7 @@ function buildReportDetail(
   for (const entries of actionEntries.values()) {
     const first = entries[0]!;
     if (!first.action.repeatEligible) continue;
-    const key = `${first.action.sessionID}\u0000${first.action.observedRole}`;
+    const key = `${first.action.sessionID}\u0000${displayedRole(first.action, sourceSessions, sourceActions)}`;
     const group = repeatGroups.get(key) ?? [];
     group.push(first.action.passNumber);
     repeatGroups.set(key, group);
@@ -569,7 +603,7 @@ function buildReportDetail(
       const repeatedPass = passes.find(
         (pass) =>
           pass.first.action.sessionID === sessionID &&
-          pass.first.action.observedRole === agent &&
+          displayedRole(pass.first.action, sourceSessions, sourceActions) === agent &&
           pass.first.action.repeatEligible,
       );
       return {
@@ -814,6 +848,6 @@ export function buildReportModels(
   return {
     selector,
     report,
-    reportDetail: buildReportDetail(reportDetailEntries, report, closeouts, now),
+    reportDetail: buildReportDetail(reportDetailEntries, report, closeouts, sessions, actions, now),
   };
 }

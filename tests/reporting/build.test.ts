@@ -234,7 +234,7 @@ test("classifies same-root creation history as standalone scoping without infere
   }
 });
 
-test("classifies every pre-creation role as scoping and leaves unassigned work unclassified", () => {
+test("classifies pre-creation architect and internal-gate roles without inferring unknown activity", () => {
   const { directory, store } = fixture();
   try {
     store.recordTopology({ beadID: "role-bead", type: "task", validatedAt: 1 });
@@ -246,6 +246,8 @@ test("classifies every pre-creation role as scoping and leaves unassigned work u
       "orchestrator",
       "worker",
       "reviewer",
+      "test-scope-reviewer",
+      "scope-complexity-reviewer",
       "integration",
       "build",
       "investigator",
@@ -277,11 +279,24 @@ test("classifies every pre-creation role as scoping and leaves unassigned work u
     });
 
     const report = generateReport(store, { bead: "role-bead" }, 120).report;
-    expect(report.phaseTotals.scoping).toEqual({ activeMs: 45, actionCount: 9 });
-    expect(report.phaseTotals.unclassified).toEqual({ activeMs: 0, actionCount: 0 });
+    expect(report.phaseTotals.scoping).toEqual({ activeMs: 20, actionCount: 4 });
+    expect(report.phaseTotals["scoping-decomposition"]).toEqual({ activeMs: 10, actionCount: 2 });
+    expect(report.phaseTotals["internal-gate"]).toEqual({ activeMs: 10, actionCount: 2 });
+    expect(report.phaseTotals.unclassified).toEqual({ activeMs: 5, actionCount: 1 });
     expect(report.phaseTotals.implementation).toEqual({ activeMs: 0, actionCount: 0 });
+    expect(renderReport(report)).toContain("| Scoping and decomposition | 10 ms | 2 |");
     const allActivity = generateReport(store, {}, 120).report;
-    expect(allActivity.phaseTotals.unclassified).toEqual({ activeMs: 10, actionCount: 1 });
+    expect(allActivity.phaseTotals.unclassified).toEqual({ activeMs: 20, actionCount: 3 });
+    const detail = buildReportModels(
+      store.readReportSnapshot(),
+      { bead: "role-bead" },
+      120,
+    ).reportDetail;
+    expect(
+      detail.passes.some(
+        ({ agent, phaseKey }) => agent === "unknown" && phaseKey === "unclassified",
+      ),
+    ).toBe(true);
   } finally {
     disposeTrackerFixture({ directory, store });
   }
@@ -302,7 +317,7 @@ test("applies the creation boundary before epic post-creation role rules", () =>
     store.startAction({
       sessionID: "epic-root",
       actionID: "pre-decompose",
-      observedRole: "planner",
+      observedRole: "architect",
       startedAt: 20,
     });
     end(store, "epic-root", "pre-decompose", 30, 2);
@@ -323,7 +338,7 @@ test("applies the creation boundary before epic post-creation role rules", () =>
     store.startAction({
       sessionID: "epic-root",
       actionID: "post-decompose",
-      observedRole: "planner",
+      observedRole: "architect",
       startedAt: 60,
     });
     end(store, "epic-root", "post-decompose", 70, 4);
@@ -332,6 +347,190 @@ test("applies the creation boundary before epic post-creation role rules", () =>
     expect(phases.scoping).toEqual({ activeMs: 10, actionCount: 1 });
     expect(phases["scoping-decomposition"]).toEqual({ activeMs: 20, actionCount: 2 });
     expect(phases.coordination).toEqual({ activeMs: 10, actionCount: 1 });
+  } finally {
+    disposeTrackerFixture({ directory, store });
+  }
+});
+
+test("classifies architect-launched proposal review before the creation boundary", () => {
+  const { directory, store } = fixture();
+  try {
+    store.recordTopology({ beadID: "proposal-epic", type: "epic", validatedAt: 1 });
+    store.recordSession({ sessionID: "architect-parent", observedAt: 1 });
+    store.startAction({
+      sessionID: "architect-parent",
+      actionID: "architect-work",
+      observedRole: "architect",
+      startedAt: 10,
+    });
+    end(store, "architect-parent", "architect-work", 20, 1);
+    store.recordAssociation({
+      receiptID: "proposal-creation",
+      sessionID: "architect-parent",
+      beadID: "proposal-epic",
+      source: "creation",
+      observedAt: 40,
+    });
+    store.recordSession({
+      sessionID: "proposal-reviewer",
+      parentSessionID: "architect-parent",
+      observedAt: 15,
+    });
+    store.recordAssociation({
+      receiptID: "proposal-review-lane",
+      sessionID: "proposal-reviewer",
+      beadID: "proposal-epic",
+      source: "inherited-lane",
+      sourceReceiptID: "proposal-creation",
+      observedAt: 15,
+    });
+    store.startAction({
+      sessionID: "proposal-reviewer",
+      actionID: "proposal-review",
+      observedRole: "reviewer",
+      startedAt: 15,
+    });
+    end(store, "proposal-reviewer", "proposal-review", 25, 1);
+
+    const phases = generateReport(store, { bead: "proposal-epic" }, 50).report.phaseTotals;
+    expect(phases["scoping-decomposition"]).toEqual({ activeMs: 20, actionCount: 2 });
+    expect(phases.scoping).toEqual({ activeMs: 0, actionCount: 0 });
+  } finally {
+    disposeTrackerFixture({ directory, store });
+  }
+});
+
+test("renders scoping and decomposition in standalone and child phase summaries", () => {
+  const { directory, store } = fixture();
+  try {
+    store.recordTopology({ beadID: "scope-epic", type: "epic", validatedAt: 1 });
+    store.recordTopology({ beadID: "scope-standalone", type: "feature", validatedAt: 1 });
+    store.recordTopology({
+      beadID: "scope-child",
+      type: "task",
+      parentBeadID: "scope-epic",
+      validatedAt: 1,
+    });
+    for (const [sessionID, beadID] of [
+      ["standalone-architect", "scope-standalone"],
+      ["child-architect", "scope-child"],
+    ]) {
+      store.recordSession({ sessionID, observedAt: 1 });
+      store.recordAssociation({
+        receiptID: `${sessionID}-association`,
+        sessionID,
+        beadID,
+        source: "selection",
+        observedAt: 1,
+      });
+      store.startAction({
+        sessionID,
+        actionID: `architecture-${sessionID}`,
+        observedRole: "architect",
+        startedAt: 10,
+      });
+      end(store, sessionID, `architecture-${sessionID}`, 20, 1);
+    }
+
+    expect(renderReport(generateReport(store, { bead: "scope-standalone" }, 30).report)).toContain(
+      "| Scoping and decomposition | 10 ms | 1 |",
+    );
+    expect(renderReport(generateReport(store, { bead: "scope-child" }, 30).report)).toContain(
+      "| Scoping and decomposition | 10 ms | 1 |",
+    );
+  } finally {
+    disposeTrackerFixture({ directory, store });
+  }
+});
+
+test("keeps gate phase separate from parent-role totals and classifies architect proposal review", () => {
+  const { directory, store } = fixture();
+  try {
+    store.recordTopology({ beadID: "standalone", type: "feature", validatedAt: 1 });
+    store.recordTopology({ beadID: "epic", type: "epic", validatedAt: 1 });
+    store.recordTopology({
+      beadID: "child",
+      type: "task",
+      parentBeadID: "epic",
+      validatedAt: 1,
+    });
+    const sessions = [
+      ["worker", undefined, "worker"],
+      ["test-gate", "worker", "test-scope-reviewer"],
+      ["reviewer", undefined, "reviewer"],
+      ["architect", undefined, "architect"],
+      ["proposal-review", "architect", "reviewer"],
+      ["epic-architect", undefined, "architect"],
+      ["epic-reviewer", undefined, "architect"],
+      ["epic-proposal-review", "epic-reviewer", "reviewer"],
+      ["child-architect", undefined, "architect"],
+      ["complexity-reviewer", undefined, "reviewer"],
+      ["scope-gate", "complexity-reviewer", "scope-complexity-reviewer"],
+      ["orchestrator", undefined, "orchestrator"],
+      ["implementation-review", "orchestrator", "reviewer"],
+    ] as const;
+    for (const [sessionID, parentSessionID, role] of sessions) {
+      store.recordSession({
+        sessionID,
+        ...(parentSessionID ? { parentSessionID } : {}),
+        observedAt: 1,
+      });
+      store.recordAssociation({
+        receiptID: `${sessionID}-association`,
+        sessionID,
+        beadID:
+          sessionID === "child-architect"
+            ? "child"
+            : sessionID.startsWith("epic-")
+              ? "epic"
+              : sessionID.includes("review") || sessionID === "architect"
+                ? "standalone"
+                : "epic",
+        source: "selection",
+        observedAt: 1,
+      });
+      store.startAction({ sessionID, actionID: "action", observedRole: role, startedAt: 10 });
+      end(store, sessionID, "action", 20, 1);
+    }
+
+    const details = buildReportModels(store.readReportSnapshot(), {}, 30).reportDetail;
+    expect(details.phases.find(({ phaseKey }) => phaseKey === "internal-gate")).toMatchObject({
+      phaseLabel: "Internal gate",
+      passCount: 2,
+    });
+    expect(renderReportDetailHtml(details)).toContain("Internal gate");
+    expect(details.agents.find(({ agent }) => agent === "worker")).toMatchObject({
+      activeMs: 10,
+      passCount: 2,
+    });
+    expect(
+      details.agents.some(
+        ({ agent }) => agent === "test-scope-reviewer" || agent === "scope-complexity-reviewer",
+      ),
+    ).toBe(false);
+    expect(details.passes.find(({ sessionID }) => sessionID === "test-gate")).toMatchObject({
+      agent: "worker",
+      phaseKey: "internal-gate",
+    });
+    expect(details.passes.find(({ sessionID }) => sessionID === "scope-gate")).toMatchObject({
+      agent: "reviewer",
+      phaseKey: "internal-gate",
+    });
+    expect(details.passes.find(({ sessionID }) => sessionID === "proposal-review")?.phaseKey).toBe(
+      "scoping-decomposition",
+    );
+    expect(
+      details.passes.find(({ sessionID }) => sessionID === "implementation-review")?.phaseKey,
+    ).toBe("review");
+    expect(
+      details.passes.find(({ sessionID }) => sessionID === "epic-proposal-review")?.phaseKey,
+    ).toBe("scoping-decomposition");
+    expect(details.passes.find(({ sessionID }) => sessionID === "epic-architect")?.phaseKey).toBe(
+      "scoping-decomposition",
+    );
+    expect(details.passes.find(({ sessionID }) => sessionID === "child-architect")?.phaseKey).toBe(
+      "scoping-decomposition",
+    );
   } finally {
     disposeTrackerFixture({ directory, store });
   }

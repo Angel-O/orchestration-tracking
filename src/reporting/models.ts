@@ -17,6 +17,7 @@ export const REPORT_PHASES = [
   "review",
   "integration-validation",
   "build",
+  "internal-gate",
   "unclassified",
 ] as const;
 export type ReportPhase = (typeof REPORT_PHASES)[number];
@@ -244,27 +245,33 @@ export const PHASE_LABELS: Readonly<Record<ReportPhase, string>> = {
   review: "Review",
   "integration-validation": "Integration validation",
   build: "Build",
+  "internal-gate": "Internal gate",
   unclassified: "Unclassified",
 };
 export const STANDALONE_PHASE_ORDER: readonly ReportPhase[] = [
   "scoping",
+  "scoping-decomposition",
   "coordination",
   "implementation",
   "review",
   "integration-validation",
   "build",
+  "internal-gate",
   "unclassified",
 ];
 export const CHILD_PHASE_ORDER: readonly ReportPhase[] = [
+  "scoping-decomposition",
   "coordination",
   "implementation",
   "review",
   "integration-validation",
   "build",
+  "internal-gate",
   "unclassified",
 ];
 export const EPIC_PHASE_ORDER: readonly ReportPhase[] = [
   "scoping-decomposition",
   "coordination",
+  "internal-gate",
   "unclassified",
 ];

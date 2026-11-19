@@ -13,10 +13,11 @@ export const ASSOCIATION_SOURCES = new Set<AssociationSource>([
 export const ROLES = new Set([
   "architect",
   "plan",
-  "planner",
   "orchestrator",
   "worker",
   "reviewer",
+  "test-scope-reviewer",
+  "scope-complexity-reviewer",
   "integration",
   "build",
   "investigator",
