@@ -22,6 +22,7 @@ const PHASES: readonly ReportPhase[] = [
   "review",
   "integration-validation",
   "build",
+  "internal-gate",
   "unclassified",
 ];
 const PHASE_LABELS: Readonly<Record<ReportPhase, string>> = {
@@ -32,6 +33,7 @@ const PHASE_LABELS: Readonly<Record<ReportPhase, string>> = {
   review: "Review",
   "integration-validation": "Integration validation",
   build: "Build",
+  "internal-gate": "Internal gate",
   unclassified: "Unclassified",
 };
 
@@ -255,10 +257,12 @@ function phaseTimelineAxis(detail: ReportDetailModel): string {
 }
 
 function directPhaseRows(detail: ReportDetailModel): string {
-  const rows = PHASES.filter((phase) => detail.phaseTotals[phase].actionCount > 0).map((phase) => {
-    const metric = detail.phaseTotals[phase];
-    return `<tr><td>${escapeHtml(PHASE_LABELS[phase])}</td><td>${escapeHtml(formatDuration(metric.activeMs))}</td><td>${escapeHtml(metric.actionCount)}</td></tr>`;
-  });
+  const rows = PHASES.filter((phase) => (detail.phaseTotals[phase]?.actionCount ?? 0) > 0).map(
+    (phase) => {
+      const metric = detail.phaseTotals[phase];
+      return `<tr><td>${escapeHtml(PHASE_LABELS[phase])}</td><td>${escapeHtml(formatDuration(metric.activeMs))}</td><td>${escapeHtml(metric.actionCount)}</td></tr>`;
+    },
+  );
   return rows.length === 0 ? '<tr><td colspan="3">None</td></tr>' : rows.join("");
 }
 

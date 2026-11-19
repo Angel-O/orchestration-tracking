@@ -35,11 +35,6 @@ export const DEFAULT_PHASE_MAPPINGS: Readonly<Record<string, PhaseMapping>> = {
     phaseLabel: "Architecture and Decomposition",
     repeatEligible: true,
   },
-  planner: {
-    phaseKey: "architecture-decomposition",
-    phaseLabel: "Architecture and Decomposition",
-    repeatEligible: true,
-  },
   investigator: {
     phaseKey: "investigation",
     phaseLabel: "Investigation",

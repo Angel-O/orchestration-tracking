@@ -131,7 +131,9 @@ test("recursively attributes pre-creation delegated activity in the generated re
 
     const report = generateReport(store, { bead: "bead-pre" }, 300).report;
     expect(report.metrics.activeMs).toBe(130);
-    expect(report.phaseTotals.scoping).toEqual({ activeMs: 130, actionCount: 3 });
+    expect(report.phaseTotals.scoping).toEqual({ activeMs: 50, actionCount: 1 });
+    expect(report.phaseTotals["scoping-decomposition"]).toEqual({ activeMs: 50, actionCount: 1 });
+    expect(report.phaseTotals.unclassified).toEqual({ activeMs: 30, actionCount: 1 });
     expect(report.phaseTotals.coordination).toEqual({ activeMs: 0, actionCount: 0 });
     expect(report.sessions?.map(({ sessionID }) => sessionID)).toEqual([
       "architect",

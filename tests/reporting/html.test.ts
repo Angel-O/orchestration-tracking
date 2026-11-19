@@ -10,6 +10,7 @@ const phaseTotals = {
   review: { activeMs: 0, actionCount: 0 },
   "integration-validation": { activeMs: 0, actionCount: 0 },
   build: { activeMs: 0, actionCount: 0 },
+  "internal-gate": { activeMs: 0, actionCount: 0 },
   unclassified: { activeMs: 0, actionCount: 0 },
 } as const;
 
